@@ -28,7 +28,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(CGLM REQUIRED cglm)
 pkg_check_modules(ASSIMP REQUIRED assimp)
-pkg_check_modules(WASSERXR_ECS REQUIRED wasserxr_ecs)
+pkg_check_modules(WASSERXR REQUIRED wasserxr)
 
 # Core (merged Components and Systems with internal Shader, Mesh, Mesh_Data utilities)
 file(GLOB CORE_SRC src/WasserXR/core/*.c src/WasserXR/core/internal/*.c)
@@ -39,8 +39,8 @@ else()
 endif()
 target_include_directories(wasserxr_core PUBLIC include)
 target_include_directories(wasserxr_core PRIVATE src/WasserXR/core/internal)
-target_include_directories(wasserxr_core PRIVATE ${GLIB_INCLUDE_DIRS} ${CGLM_INCLUDE_DIRS} ${ASSIMP_INCLUDE_DIRS} ${WASSERXR_ECS_INCLUDE_DIRS})
-target_link_libraries(wasserxr_core PRIVATE glfw pthread ${CGLM_LIBRARIES} m ${GLIB_LIBRARIES} ${ASSIMP_LIBRARIES} ${WASSERXR_ECS_LIBRARIES})
+target_include_directories(wasserxr_core PRIVATE ${GLIB_INCLUDE_DIRS} ${CGLM_INCLUDE_DIRS} ${ASSIMP_INCLUDE_DIRS} ${WASSERXR_INCLUDE_DIRS})
+target_link_libraries(wasserxr_core PRIVATE glfw pthread ${CGLM_LIBRARIES} m ${GLIB_LIBRARIES} ${ASSIMP_LIBRARIES} ${WASSERXR_LIBRARIES})
 
 # ===
 # Install
@@ -70,7 +70,7 @@ enable_testing()
 function(add_wasserxr_test test_name)
     add_executable(${test_name} tests/${test_name}.c src/glad/gl.c)
     target_include_directories(${test_name} PRIVATE ${GLIB_INCLUDE_DIRS})
-    target_link_libraries(${test_name} PRIVATE wasserxr_ecs ${GLIB_LIBRARIES})
+    target_link_libraries(${test_name} PRIVATE wasserxr ${GLIB_LIBRARIES})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
