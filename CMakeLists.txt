@@ -57,6 +57,19 @@ install(TARGETS wasserxr_core
 # Install include directory
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+# Create the .pc file for pkg-config
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/wasserxr_core.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/wasserxr_core.pc
+    @ONLY
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/wasserxr_core.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+)
+
 # ===
 # Tests
 # ===
