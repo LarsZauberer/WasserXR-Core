@@ -1,0 +1,11 @@
+.cache/
+build/
+.direnv/
+result
+vgcore*
+compile_commands.json
+Testing/*
+.envrc
+.gdb_history
+
+AGENTS.md
