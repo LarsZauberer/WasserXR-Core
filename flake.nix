@@ -17,7 +17,7 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs { inherit system; };
         lib = nixpkgs.lib;
       in
       {
@@ -41,12 +41,14 @@
             pkgs.clang
             pkgs.cmake
             pkgs.doxygen
+            pkgs.pkg-config
+          ];
 
+          buildInputs = [
             # Libraries
             pkgs.glfw
             pkgs.glib
             pkgs.cglm
-            pkgs.pkg-config
             pkgs.pcre2
             pkgs.libsysprof-capture
             pkgs.assimp
@@ -62,6 +64,37 @@
           meta = {
             license = pkgs.lib.licenses.mit;
           };
+        };
+        checks = {
+          clang-tidy = self.packages.${system}.default.overrideAttrs (oldAttrs: {
+            pname = "WasserXR-Core-clang-tidy";
+            nativeBuildInputs = oldAttrs.nativeBuildInputs ++ [ pkgs.python3 ];
+            cmakeFlags = [
+              (lib.cmakeBool "BUILD_DEBUG" false)
+              (lib.cmakeBool "WXR_STATIC" false)
+              (lib.cmakeBool "WXR_TESTS" false)
+            ];
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              python3 $(command -v run-clang-tidy) -p . -warnings-as-errors='*' 'src/WasserXR/.*\.c$'
+              runHook postCheck
+            '';
+          });
+          default = self.packages.${system}.default.overrideAttrs (_: {
+            pname = "WasserXR-Core-tests";
+            cmakeFlags = [
+              (lib.cmakeBool "BUILD_DEBUG" false)
+              (lib.cmakeBool "WXR_STATIC" false)
+              (lib.cmakeBool "WXR_TESTS" true)
+            ];
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              ctest --output-on-failure
+              runHook postCheck
+            '';
+          });
         };
         devShells.default = pkgs.mkShell {
           name = "devShell";
