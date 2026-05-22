@@ -17,5 +17,5 @@ standard library of components and systems for the
 [WasserXR ECS](https://github.com/LarsZauberer/WasserXR). These should make it
 easy and accessible to create games and applications.
 
-For the **ECS Runtime** repository can be found
+The **ECS Runtime** repository can be found
 [here](https://github.com/LarsZauberer/WasserXR)
