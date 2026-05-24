@@ -1,0 +1,24 @@
+name: CTest Suite
+
+on:
+  pull_request:
+    branches: [ "*" ]
+  push:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install Nix
+      uses: cachix/install-nix-action@v26
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+    
+    - name: Build project and run tests
+      run: nix build ".#checks.$(nix eval --impure --raw --expr 'builtins.currentSystem').default"
