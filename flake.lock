@@ -111,11 +111,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1779631631,
-        "narHash": "sha256-mgtxfjlSnFqWVVcsv79PSoV3w4iAj33G5WAXq6oUqYY=",
+        "lastModified": 1779632856,
+        "narHash": "sha256-Tsv2qF0P1baQAlKgRteMCfHQEoAGOd+jwnhr/EVsAiI=",
         "owner": "LarsZauberer",
         "repo": "WasserXR",
-        "rev": "c7b29d51f436b2ec53abbe40b6b32715d6171999",
+        "rev": "01e8ca7cbb8417ee9b3fde0ff8de88516a9b6c44",
         "type": "github"
       },
       "original": {
