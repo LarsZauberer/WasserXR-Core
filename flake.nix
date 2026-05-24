@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    wasserxr.url = "/home/lars/GitHub/WasserXR/WasserXR";
+    wasserxr.url = "github:LarsZauberer/WasserXR";
   };
 
   outputs =
@@ -54,7 +54,7 @@
           ];
 
           cmakeFlags = [
-            (lib.cmakeBool "BUILD_DEBUG" false)
+            (lib.cmakeBool "BUILD_DEBUG" true)
             (lib.cmakeBool "WXR_STATIC" false)
             (lib.cmakeBool "WXR_TESTS" false)
           ];
@@ -71,7 +71,6 @@
             pkgs.clang
             pkgs.cmake
             pkgs.gdb
-            pkgs.valgrind
 
             pkgs.doxygen
 
