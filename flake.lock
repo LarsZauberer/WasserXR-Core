@@ -111,14 +111,17 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1778679250,
-        "narHash": "sha256-fTHfElDwtaNP5l9fxcVh4lhjPaMFijy76g9PCywoNSM=",
-        "path": "/home/lars/GitHub/WasserXR/WasserXR",
-        "type": "path"
+        "lastModified": 1779631631,
+        "narHash": "sha256-mgtxfjlSnFqWVVcsv79PSoV3w4iAj33G5WAXq6oUqYY=",
+        "owner": "LarsZauberer",
+        "repo": "WasserXR",
+        "rev": "c7b29d51f436b2ec53abbe40b6b32715d6171999",
+        "type": "github"
       },
       "original": {
-        "path": "/home/lars/GitHub/WasserXR/WasserXR",
-        "type": "path"
+        "owner": "LarsZauberer",
+        "repo": "WasserXR",
+        "type": "github"
       }
     }
   },

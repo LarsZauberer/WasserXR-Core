@@ -56,7 +56,7 @@
           ];
 
           cmakeFlags = [
-            (lib.cmakeBool "BUILD_DEBUG" true)
+            (lib.cmakeBool "BUILD_DEBUG" false)
             (lib.cmakeBool "WXR_STATIC" false)
             (lib.cmakeBool "WXR_TESTS" false)
           ];

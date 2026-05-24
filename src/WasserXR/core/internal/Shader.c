@@ -4,9 +4,7 @@
 #include <cglm/cglm.h>
 #include <glad/gl.h>
 #include <glib.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 WXR_Shader *wxr_create_shader(const char *path) {
   WXR_Shader *shader = (WXR_Shader *)malloc(sizeof(WXR_Shader));
@@ -27,15 +25,9 @@ int wxr_load_shader(WXR_Shader *shader) {
       shader, 1,
       "Shader is NULL during wxr_load_shader. Call `wxr_create_shader` first");
 
-  // Build vertex shader path
-  GString *vertex_path_gstring = g_string_new(shader->path);
-  g_string_append(vertex_path_gstring, ".vert");
-  char *vertex_path = g_string_free(vertex_path_gstring, FALSE);
-
-  // Build fragment shader path
-  GString *fragment_path_gstring = g_string_new(shader->path);
-  g_string_append(fragment_path_gstring, ".frag");
-  char *fragment_path = g_string_free(fragment_path_gstring, FALSE);
+  // Build vertex and fragmenet shader path
+  char *vertex_path = wxr_append_char_ptr(shader->path, ".vert");
+  char *fragment_path = wxr_append_char_ptr(shader->path, ".frag");
 
   // Load vertex shader
   shader->vertex_source = wxr_read_file(vertex_path);
