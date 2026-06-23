@@ -1,16 +1,11 @@
 use ratatui::DefaultTerminal;
 use wasserxr::component;
 
-use crate::console::console_app::ConsoleApp;
+use crate::console::console_system::AppState;
 
 #[component]
 #[derive(Default)]
 struct Console {
-    #[getter]
     #[mutable]
-    terminal: Option<DefaultTerminal>,
-
-    #[getter]
-    #[mutable]
-    app: Option<ConsoleApp>,
+    state: AppState,
 }
