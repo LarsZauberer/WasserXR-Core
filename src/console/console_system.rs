@@ -190,6 +190,9 @@ fn get_input() -> Option<KeyCode> {
 }
 
 fn draw(state: AppState, scene: &mut Scene, frame: &mut Frame) {
+    // WARN: It is not possible to call `Layout` because it introduces a new thread, that will
+    // destroy Hotreloading
+
     // Title bar
     let total_area = frame.area();
     let logo_border = Block::bordered()
@@ -198,13 +201,19 @@ fn draw(state: AppState, scene: &mut Scene, frame: &mut Frame) {
     let inner_area = logo_border.inner(total_area);
     frame.render_widget(logo_border, total_area);
 
-    // Header and Main Content split
-    let main_layout = Layout::default()
-        .direction(Vertical)
-        .constraints(vec![Length(1), Fill(1)])
-        .split(inner_area);
-    let tab_area = main_layout[0];
-    let content_area = main_layout[1];
+    let tab_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y,
+        width: inner_area.width,
+        height: inner_area.height.min(1),
+    };
+
+    let content_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y.saturating_add(tab_area.height),
+        width: inner_area.width,
+        height: inner_area.height.saturating_sub(tab_area.height),
+    };
 
     // Tab Bar
     let tab = ratatui::widgets::Tabs::new(TABS)
