@@ -15,14 +15,10 @@ pub struct Transform {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::c_void;
-
-    use wasserxr::{scene::Scene, scene::component::Schema};
+    use wasserxr::scene::Scene;
 
     #[test]
     fn transform_component_defaults_and_mutates_fields() {
-        retain_static_symbols();
-
         let mut scene = Scene::new();
 
         let entity = scene.add_entity();
@@ -66,16 +62,5 @@ mod tests {
         assert_eq!(*scale, [7.0, 8.0, 9.0]);
 
         scene.remove_component(entity, "Transform").unwrap();
-    }
-
-    fn retain_static_symbols() {
-        std::hint::black_box((
-            super::wxr_create_Transform as unsafe extern "C" fn() -> *mut c_void,
-            super::wxr_destroy_Transform as unsafe extern "C" fn(*mut c_void),
-            super::wxr_schema_Transform as unsafe extern "C" fn(*mut Schema),
-            super::wxr_get_Transform_location as unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-            super::wxr_get_Transform_rotation as unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-            super::wxr_get_Transform_scale as unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-        ));
     }
 }
