@@ -9,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use wasserxr::{Uuid, attacher, component, detacher, scene::Scene, system};
+use wasserxr::{Uuid, attacher, detacher, scene::Scene, system};
 
 static TERMINAL: Mutex<Option<DefaultTerminal>> = Mutex::new(None);
 static SELECTED_ENTITY: Mutex<Option<usize>> = Mutex::new(None);
