@@ -1,7 +1,6 @@
-use ratatui::DefaultTerminal;
 use wasserxr::component;
 
-use crate::console::console_system::AppState;
+use crate::console::state::AppState;
 
 #[component]
 #[derive(Default)]
