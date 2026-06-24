@@ -55,9 +55,7 @@ fn handle_input(scene: &mut Scene, state: AppState, key: KeyCode) -> AppState {
             let _ = scene.reload();
             state
         }
-        _ => state
-            .handle_input(key)
-            .normalize_entity_selection(scene.get_entities().len()),
+        _ => state.handle_input(key),
     }
 }
 

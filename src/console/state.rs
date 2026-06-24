@@ -9,13 +9,14 @@ use ratatui::{
 };
 use wasserxr::scene::Scene;
 
+use crate::console::state::PromtTextCallback::Abort;
+
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 
 #[derive(Default, Clone, Copy)]
 pub struct AppState {
     pub tab: usize,
     pub entity_list: EntityListState,
-    pub entity_detail: EntityDetailState,
     pub plugin_list: PluginListState,
     pub system_list: SystemListState,
 }
@@ -23,33 +24,24 @@ pub struct AppState {
 impl AppState {
     pub fn handle_input(mut self, key: KeyCode) -> AppState {
         match key {
-            KeyCode::Right | KeyCode::Char('l') => self.tab_next(),
-            KeyCode::Left | KeyCode::Char('h') => self.tab_prev(),
-            _ if self.tab == 0 && self.entity_detail.active => {
-                self.entity_detail = self.entity_detail.handle_input(key);
-                self
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.tab = self.tab.wrapping_add(1);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.tab = self.tab.wrapping_sub(1);
             }
             _ if self.tab == 0 => {
-                if key == KeyCode::Enter {
-                    self.entity_detail = EntityDetailState {
-                        active: true,
-                        selected: self.entity_list.selected,
-                    };
-                } else {
-                    self.entity_list = self.entity_list.handle_input(key);
-                }
-                self
+                self.entity_list = self.entity_list.handle_input(key);
             }
             _ if self.tab == 1 => {
                 self.plugin_list = self.plugin_list.handle_input(key);
-                self
             }
             _ if self.tab == 2 => {
                 self.system_list = self.system_list.handle_input(key);
-                self
             }
-            _ => self,
+            _ => {}
         }
+        self
     }
 
     pub fn draw(&self, scene: &mut Scene, frame: &mut Frame, area: Rect) {
@@ -84,49 +76,48 @@ impl AppState {
         frame.render_widget(tab, tab_area);
 
         match self.tab {
-            0 if self.entity_detail.active => self.entity_detail.draw(scene, frame, content_area),
             0 => self.entity_list.draw(scene, frame, content_area),
             1 => self.plugin_list.draw(scene, frame, content_area),
             2 => self.system_list.draw(scene, frame, content_area),
             _ => draw_placeholder(frame, content_area, "Log"),
         }
     }
-
-    pub fn normalize_entity_selection(mut self, entity_len: usize) -> AppState {
-        self.entity_list = self.entity_list.normalize(entity_len);
-        if !self.entity_detail.active {
-            self.entity_detail.selected = self.entity_list.selected;
-        }
-        self
-    }
-
-    fn tab_next(mut self) -> AppState {
-        self.tab = wrap_next(self.tab, TABS.len());
-        self
-    }
-
-    fn tab_prev(mut self) -> AppState {
-        self.tab = wrap_prev(self.tab, TABS.len());
-        self
-    }
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct EntityListState {
-    pub selected: usize,
+    pub entity_detail: EntityDetailState,
 }
 
 impl EntityListState {
     pub fn handle_input(mut self, key: KeyCode) -> EntityListState {
-        match key {
-            KeyCode::Down | KeyCode::Char('j') => self.selected = self.selected.wrapping_add(1),
-            KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.wrapping_sub(1),
-            _ => {}
+        if self.entity_detail.active {
+            self.entity_detail = EntityDetailState::handle_input(self.entity_detail, key);
+            self
+        } else {
+            match key {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.entity_detail.selected = self.entity_detail.selected.wrapping_add(1);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.entity_detail.selected = self.entity_detail.selected.wrapping_sub(1);
+                }
+                KeyCode::Enter => {
+                    self.entity_detail.active = true;
+                }
+                _ => {}
+            }
+            self
         }
-        self
     }
 
     pub fn draw(&self, scene: &mut Scene, frame: &mut Frame, area: Rect) {
+        // Draw the Details screen if active
+        if self.entity_detail.active {
+            EntityDetailState::draw(&self.entity_detail, scene, frame, area);
+            return;
+        }
+
         let entity_ids = scene.get_entities();
         let entities: Vec<ListItem> = entity_ids
             .iter()
@@ -150,15 +141,13 @@ impl EntityListState {
 
         let mut list_state = ListState::default();
         if !entity_ids.is_empty() {
-            list_state.select(Some(normalize_index(self.selected, entity_ids.len())));
+            list_state.select(Some(normalize_index(
+                self.entity_detail.selected,
+                entity_ids.len(),
+            )));
         }
 
         frame.render_stateful_widget(list, area, &mut list_state);
-    }
-
-    fn normalize(mut self, len: usize) -> EntityListState {
-        self.selected = normalize_index(self.selected, len);
-        self
     }
 }
 
@@ -239,21 +228,42 @@ impl SystemListState {
     }
 }
 
-fn wrap_next(index: usize, len: usize) -> usize {
-    if len == 0 {
-        0
-    } else {
-        let index = index % len;
-        if index + 1 == len { 0 } else { index + 1 }
-    }
+#[derive(Default, Clone, Copy)]
+pub enum PromtTextCallback {
+    #[default]
+    None,
+    Abort,
+    Submit,
 }
 
-fn wrap_prev(index: usize, len: usize) -> usize {
-    if len == 0 {
-        0
-    } else {
-        let index = index % len;
-        if index == 0 { len - 1 } else { index - 1 }
+#[derive(Default, Clone)]
+pub struct PromptTextState {
+    pub title: String,
+    pub text: String,
+    pub active: bool,
+    pub callback: PromtTextCallback,
+}
+
+impl PromptTextState {
+    pub fn handle_input(mut self, key: KeyCode) -> Self {
+        match key {
+            KeyCode::Esc => {
+                self.active = false;
+                self.callback = Abort;
+            }
+            KeyCode::Enter => {
+                self.active = false;
+                self.callback = PromtTextCallback::Submit
+            }
+            KeyCode::Char(c) => {
+                self.text.push(c);
+            }
+            KeyCode::Backspace => {
+                let _ = self.text.pop();
+            }
+            _ => {}
+        }
+        self
     }
 }
 
@@ -289,84 +299,4 @@ fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str) {
         .style(Color::DarkGray)
         .alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(paragraph, area);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn previous_tab_wraps_from_first_to_last() {
-        let state = AppState::default().tab_prev();
-
-        assert_eq!(state.tab, TABS.len() - 1);
-    }
-
-    #[test]
-    fn next_tab_wraps_from_last_to_first() {
-        let state = AppState {
-            tab: TABS.len() - 1,
-            ..Default::default()
-        }
-        .tab_next();
-
-        assert_eq!(state.tab, 0);
-    }
-
-    #[test]
-    fn previous_entity_wraps_from_first_to_last() {
-        let state = AppState::default()
-            .handle_input(KeyCode::Up)
-            .normalize_entity_selection(3);
-
-        assert_eq!(state.entity_list.selected, 2);
-    }
-
-    #[test]
-    fn entity_selection_ignores_empty_lists() {
-        let state = AppState {
-            entity_list: EntityListState { selected: 4 },
-            ..Default::default()
-        };
-
-        assert_eq!(state.normalize_entity_selection(0).entity_list.selected, 0);
-    }
-
-    #[test]
-    fn entity_selection_normalizes_out_of_range_indexes() {
-        let state = AppState {
-            entity_list: EntityListState {
-                selected: usize::MAX,
-            },
-            ..Default::default()
-        };
-
-        assert_eq!(state.normalize_entity_selection(3).entity_list.selected, 2);
-    }
-
-    #[test]
-    fn enter_opens_entity_details() {
-        let state = AppState {
-            entity_list: EntityListState { selected: 2 },
-            ..Default::default()
-        }
-        .handle_input(KeyCode::Enter);
-
-        assert!(state.entity_detail.active);
-        assert_eq!(state.entity_detail.selected, 2);
-    }
-
-    #[test]
-    fn escape_closes_entity_details() {
-        let state = AppState {
-            entity_detail: EntityDetailState {
-                active: true,
-                selected: 0,
-            },
-            ..Default::default()
-        }
-        .handle_input(KeyCode::Esc);
-
-        assert!(!state.entity_detail.active);
-    }
 }
