@@ -4,6 +4,7 @@ use std::{
 };
 
 use crossterm::event::KeyCode;
+use log::debug;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Position, Rect},
@@ -24,6 +25,7 @@ enum Screen {
     EntityList(usize),
     EntityDetails(Uuid, usize),
     Prompt(TextPrompt),
+    Error(ErrorScreen),
     PluginList(usize),
     SystemList(usize),
 }
@@ -50,6 +52,21 @@ impl TextPrompt {
 }
 
 #[derive(Clone)]
+struct ErrorScreen {
+    message: String,
+    on_close: Box<Screen>,
+}
+
+impl ErrorScreen {
+    fn new(message: impl Into<String>, on_close: Screen) -> Self {
+        Self {
+            message: message.into(),
+            on_close: Box::new(on_close),
+        }
+    }
+}
+
+#[derive(Clone)]
 enum PromptSubmit {
     RenameEntity(Uuid),
     CreateEntity,
@@ -58,14 +75,22 @@ enum PromptSubmit {
 impl PromptSubmit {
     fn run(self, scene: &mut Scene, text: String) -> Screen {
         match self {
-            Self::RenameEntity(id) => {
-                let _ = scene.set_entity_name(id, text);
-                Screen::EntityDetails(id, 0)
-            }
+            Self::RenameEntity(id) => match scene.set_entity_name(id, text) {
+                Ok(()) => Screen::EntityDetails(id, 0),
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    format!("Failed to rename entity {}: {:?}", id, error),
+                    Screen::EntityDetails(id, 0),
+                )),
+            },
             Self::CreateEntity => {
                 let entity = scene.add_entity();
-                let _ = scene.set_entity_name(entity, text);
-                Screen::EntityDetails(entity, 0)
+                match scene.set_entity_name(entity, text) {
+                    Ok(()) => Screen::EntityDetails(entity, 0),
+                    Err(error) => Screen::Error(ErrorScreen::new(
+                        format!("Failed to name entity {}: {:?}", entity, error),
+                        Screen::EntityDetails(entity, 0),
+                    )),
+                }
             }
         }
     }
@@ -133,10 +158,13 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
     match state {
         // Entity List
         Screen::EntityList(index) => match input {
-            KeyCode::Char('r') => {
-                let _ = scene.reload();
-                Screen::EntityList(index)
-            }
+            KeyCode::Char('r') => match scene.reload() {
+                Ok(()) => Screen::EntityList(index),
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    format!("Failed to reload scene: {:?}", error),
+                    Screen::EntityList(index),
+                )),
+            },
             KeyCode::Char('q') => {
                 scene.should_exit();
                 Screen::EntityList(index)
@@ -161,6 +189,26 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::CreateEntity,
                 Screen::EntityList(index),
             )),
+            KeyCode::Char('D') => {
+                let entities = scene.get_entities();
+                if entities.is_empty() {
+                    Screen::EntityList(index)
+                } else {
+                    if let Some(id) = entities.get(index) {
+                        match scene.remove_entity(*id) {
+                            Ok(()) => {
+                                Screen::EntityList(index.min(entities.len().saturating_sub(2)))
+                            }
+                            Err(error) => Screen::Error(ErrorScreen::new(
+                                format!("Failed to delete entity {}: {:?}", id, error),
+                                Screen::EntityList(index),
+                            )),
+                        }
+                    } else {
+                        Screen::EntityList(index)
+                    }
+                }
+            }
             _ => Screen::EntityList(index),
         },
         // Entity Details
@@ -224,6 +272,10 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Enter => prompt.on_submit.run(scene, prompt.text),
             _ => Screen::Prompt(prompt),
         },
+        Screen::Error(error) => match input {
+            KeyCode::Char('q') | KeyCode::Enter | KeyCode::Esc => *error.on_close,
+            _ => Screen::Error(error),
+        },
         state => {
             // Global Keybinds
             state
@@ -254,6 +306,7 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
             draw_entity_detail(frame, scene, id, component_index)
         }
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
+        Screen::Error(error) => draw_error_screen(frame, &error),
         _ => build_place_holer_not_implemented(frame, frame.area()),
     }
 }
@@ -369,6 +422,17 @@ fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
         input_area.x + 1 + (prompt.offset as u16).min(input_area.width.saturating_sub(2)),
         input_area.y + 1,
     ));
+}
+
+fn draw_error_screen(frame: &mut Frame, error: &ErrorScreen) {
+    let main_area = build_title_border(frame);
+    let error_area = centered_rect(main_area, main_area.width.min(60), main_area.height.min(3));
+
+    let message = Paragraph::new(error.message.as_str())
+        .block(Block::bordered().style(Color::Red).title("Error"))
+        .style(Color::Red)
+        .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(message, error_area);
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
