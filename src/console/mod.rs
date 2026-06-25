@@ -10,9 +10,14 @@ use ratatui::{
     style::Color,
     symbols,
     text::{Line, Span},
-    widgets::{Block, List, ListItem, ListState, Paragraph},
+    widgets::{Block, List, ListItem, ListState, Paragraph, Wrap},
 };
-use wasserxr::{Uuid, attacher, detacher, error::SceneError, scene::Scene, system};
+use wasserxr::{
+    Uuid, attacher, detacher,
+    error::{ComponentError, PluginError, SceneError},
+    scene::Scene,
+    system,
+};
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 
@@ -81,6 +86,80 @@ impl ErrorScreen {
     }
 }
 
+fn scene_error_message(error: &SceneError) -> String {
+    match error {
+        SceneError::EntityNotFound => "the entity no longer exists".to_owned(),
+        SceneError::ComponentAlreadyExists => {
+            "a component with that name already exists on this entity".to_owned()
+        }
+        SceneError::SystemAlreadyExists => "a system with that name already exists".to_owned(),
+        SceneError::PluginAlreadyLoaded => "the plugin is already loaded".to_owned(),
+        SceneError::SystemNotFound => "the system was not found".to_owned(),
+        SceneError::PluginNotFound => "the plugin was not found".to_owned(),
+        SceneError::StaticPluginUnload => {
+            "the built-in static plugin cannot be unloaded".to_owned()
+        }
+        SceneError::ComponentNotFound => "the component was not found on this entity".to_owned(),
+        SceneError::ComponentFieldError(error) => component_error_reason(error),
+        SceneError::PluginLoading(error) => plugin_error_reason(error),
+        SceneError::SystemCreation => {
+            "no loaded plugin could create that system; check the system name and exports"
+                .to_owned()
+        }
+        SceneError::ComponentCreation => {
+            "no loaded plugin could create that component; check the component name and exports"
+                .to_owned()
+        }
+        SceneError::Serialization(message) => format!("scene serialization failed: {message}"),
+        SceneError::Deserialization(message) => {
+            format!("scene deserialization failed: {message}")
+        }
+        SceneError::FileIo(message) => format!("file operation failed: {message}"),
+    }
+}
+
+fn component_error_reason(error: &ComponentError) -> String {
+    match error {
+        ComponentError::FieldNotFound => "the field was not found on this component".to_owned(),
+        ComponentError::FieldNoGetter => {
+            "the field cannot be read because it has no getter".to_owned()
+        }
+        ComponentError::FieldNotMutable => "the field is read-only".to_owned(),
+        ComponentError::FieldNoSerializer => {
+            "the field cannot be serialized because it has no serializer".to_owned()
+        }
+        ComponentError::FieldNoDeserializer => {
+            "the field cannot be deserialized because it has no deserializer".to_owned()
+        }
+        ComponentError::NoCreator(error) => {
+            format!(
+                "the component creator is unavailable: {}",
+                plugin_error_reason(error)
+            )
+        }
+        ComponentError::NoDestroyer(error) => {
+            format!(
+                "the component destroyer is unavailable: {}",
+                plugin_error_reason(error)
+            )
+        }
+        ComponentError::FieldParsing => "the requested field list is invalid".to_owned(),
+        ComponentError::FieldValueParsing => {
+            "the entered value is not valid for this field type".to_owned()
+        }
+    }
+}
+
+fn plugin_error_reason(error: &PluginError) -> String {
+    match error {
+        PluginError::LinkingError(message) => format!("linking failed: {message}"),
+        PluginError::MissingSymbol(symbol) => {
+            format!("the plugin is missing required symbol `{symbol}`")
+        }
+        PluginError::InvalidSymbol => "a symbol name contains an invalid null byte".to_owned(),
+    }
+}
+
 #[derive(Clone)]
 enum PromptSubmit {
     RenameEntity(Uuid),
@@ -101,7 +180,7 @@ impl PromptSubmit {
             Self::RenameEntity(id) => match scene.set_entity_name(id, text) {
                 Ok(()) => Screen::EntityDetails(id, 0),
                 Err(error) => Screen::Error(ErrorScreen::new(
-                    format!("Failed to rename entity {}: {:?}", id, error),
+                    scene_error_message(&error),
                     Screen::EntityDetails(id, 0),
                 )),
             },
@@ -110,7 +189,7 @@ impl PromptSubmit {
                 match scene.set_entity_name(entity, text) {
                     Ok(()) => Screen::EntityDetails(entity, 0),
                     Err(error) => Screen::Error(ErrorScreen::new(
-                        format!("Failed to name entity {}: {:?}", entity, error),
+                        scene_error_message(&error),
                         Screen::EntityDetails(entity, 0),
                     )),
                 }
@@ -124,19 +203,8 @@ impl PromptSubmit {
                         component_index: 0,
                         field_index: 0,
                     },
-                    Err(SceneError::EntityNotFound) => Screen::Error(ErrorScreen::new(
-                        format!("Entity {} no longer exists: EntityNotFound", entity_id),
-                        Screen::EntityDetails(entity_id, 0),
-                    )),
-                    Err(SceneError::ComponentCreation) => Screen::Error(ErrorScreen::new(
-                        format!(
-                            "Failed to create component {}: ComponentCreation",
-                            component_id
-                        ),
-                        Screen::EntityDetails(entity_id, 0),
-                    )),
                     Err(error) => Screen::Error(ErrorScreen::new(
-                        format!("Failed to create component {}: {:?}", component_id, error),
+                        scene_error_message(&error),
                         Screen::EntityDetails(entity_id, 0),
                     )),
                 }
@@ -157,7 +225,7 @@ impl PromptSubmit {
                 match scene.parse_field(entity_id, &component_id, &field_id, &text) {
                     Ok(()) => component_screen,
                     Err(error) => Screen::Error(ErrorScreen::new(
-                        format!("Failed to set {}.{}: {:?}", component_id, field_id, error),
+                        scene_error_message(&error),
                         component_screen,
                     )),
                 }
@@ -231,7 +299,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Char('r') => match scene.reload() {
                 Ok(()) => Screen::EntityList(index),
                 Err(error) => Screen::Error(ErrorScreen::new(
-                    format!("Failed to reload scene: {:?}", error),
+                    scene_error_message(&error),
                     Screen::EntityList(index),
                 )),
             },
@@ -270,7 +338,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                                 Screen::EntityList(index.min(entities.len().saturating_sub(2)))
                             }
                             Err(error) => Screen::Error(ErrorScreen::new(
-                                format!("Failed to delete entity {}: {:?}", id, error),
+                                scene_error_message(&error),
                                 Screen::EntityList(index),
                             )),
                         }
@@ -320,6 +388,31 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::CreateComponent(id),
                 Screen::EntityDetails(id, component_index),
             )),
+            KeyCode::Char('D') => match scene.get_entity_components(id) {
+                Ok(components) if components.is_empty() => {
+                    Screen::EntityDetails(id, component_index)
+                }
+                Ok(components) => {
+                    if let Some(component_id) = components.get(component_index) {
+                        match scene.remove_component(id, component_id) {
+                            Ok(()) => Screen::EntityDetails(
+                                id,
+                                component_index.min(components.len().saturating_sub(2)),
+                            ),
+                            Err(error) => Screen::Error(ErrorScreen::new(
+                                scene_error_message(&error),
+                                Screen::EntityDetails(id, component_index),
+                            )),
+                        }
+                    } else {
+                        Screen::EntityDetails(id, component_index)
+                    }
+                }
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    scene_error_message(&error),
+                    Screen::EntityDetails(id, component_index),
+                )),
+            },
             KeyCode::Enter => {
                 if let Ok(components) = scene.get_entity_components(id)
                     && let Some(component_id) = components.get(component_index)
@@ -401,7 +494,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                             component_screen,
                         )),
                         Err(error) => Screen::Error(ErrorScreen::new(
-                            format!("Failed to read {}.{}: {:?}", component_id, field_id, error),
+                            scene_error_message(&error),
                             component_screen,
                         )),
                     }
@@ -699,12 +792,13 @@ fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
 
 fn draw_error_screen(frame: &mut Frame, error: &ErrorScreen) {
     let main_area = build_title_border(frame);
-    let error_area = centered_rect(main_area, main_area.width.min(60), main_area.height.min(3));
+    let error_area = centered_rect(main_area, main_area.width.min(60), main_area.height.min(8));
 
     let message = Paragraph::new(error.message.as_str())
         .block(Block::bordered().style(Color::Red).title("Error"))
         .style(Color::Red)
-        .alignment(ratatui::layout::Alignment::Center);
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true });
     frame.render_widget(message, error_area);
 }
 
