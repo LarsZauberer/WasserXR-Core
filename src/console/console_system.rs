@@ -14,6 +14,8 @@ use ratatui::{
 };
 use wasserxr::{Uuid, attacher, detacher, scene::Scene, system};
 
+use crate::console::console_system::PromptSubmit::CreateEntity;
+
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 
 static TERMINAL: LazyLock<Mutex<Option<DefaultTerminal>>> = LazyLock::new(|| Mutex::new(None));
@@ -23,9 +25,52 @@ static STATE: LazyLock<Mutex<Screen>> = LazyLock::new(|| Mutex::new(Screen::defa
 enum Screen {
     EntityList(usize),
     EntityDetails(Uuid, usize),
-    EntityRenaming(Uuid, String, usize),
+    Prompt(TextPrompt),
     PluginList(usize),
     SystemList(usize),
+}
+
+#[derive(Clone)]
+struct TextPrompt {
+    title: String,
+    text: String,
+    offset: usize,
+    on_submit: PromptSubmit,
+    on_cancel: Box<Screen>,
+}
+
+impl TextPrompt {
+    fn new(title: impl Into<String>, on_submit: PromptSubmit, on_cancel: Screen) -> Self {
+        Self {
+            title: title.into(),
+            text: String::new(),
+            offset: 0,
+            on_submit,
+            on_cancel: Box::new(on_cancel),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum PromptSubmit {
+    RenameEntity(Uuid),
+    CreateEntity,
+}
+
+impl PromptSubmit {
+    fn run(self, scene: &mut Scene, text: String) -> Screen {
+        match self {
+            Self::RenameEntity(id) => {
+                let _ = scene.set_entity_name(id, text);
+                Screen::EntityDetails(id, 0)
+            }
+            Self::CreateEntity => {
+                let entity = scene.add_entity();
+                let _ = scene.set_entity_name(entity, text);
+                Screen::EntityDetails(entity, 0)
+            }
+        }
+    }
 }
 
 impl Default for Screen {
@@ -113,6 +158,11 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                     Screen::EntityList(index)
                 }
             }
+            KeyCode::Char('a') => Screen::Prompt(TextPrompt::new(
+                "New Entity Name",
+                PromptSubmit::CreateEntity,
+                Screen::EntityList(index),
+            )),
             _ => Screen::EntityList(index),
         },
         // Entity Details
@@ -144,33 +194,37 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                     Screen::EntityDetails(id, component_index)
                 }
             }
-            KeyCode::Char('r') => Screen::EntityRenaming(id, "".to_owned(), 0),
+            KeyCode::Char('r') => Screen::Prompt(TextPrompt::new(
+                format!("Rename Entity: {}", id),
+                PromptSubmit::RenameEntity(id),
+                Screen::EntityDetails(id, 0),
+            )),
             _ => Screen::EntityDetails(id, component_index),
         },
-        Screen::EntityRenaming(id, mut text, offset) => match input {
-            KeyCode::Esc => Screen::EntityDetails(id, 0),
+        Screen::Prompt(mut prompt) => match input {
+            KeyCode::Esc => *prompt.on_cancel,
             KeyCode::Backspace => {
-                let offset = index_sub_no_loop(offset);
-                if offset < text.len() {
-                    text.remove(offset);
+                prompt.offset = index_sub_no_loop(prompt.offset);
+                if prompt.offset < prompt.text.len() {
+                    prompt.text.remove(prompt.offset);
                 }
-                Screen::EntityRenaming(id, text, offset)
+                Screen::Prompt(prompt)
             }
             KeyCode::Char(c) => {
-                text.insert(offset, c);
-                let len = text.len();
-                Screen::EntityRenaming(id, text, index_add_no_loop(offset, len))
+                prompt.text.insert(prompt.offset, c);
+                prompt.offset = index_add_no_loop(prompt.offset, prompt.text.len());
+                Screen::Prompt(prompt)
             }
-            KeyCode::Left => Screen::EntityRenaming(id, text, index_sub_no_loop(offset)),
+            KeyCode::Left => {
+                prompt.offset = index_sub_no_loop(prompt.offset);
+                Screen::Prompt(prompt)
+            }
             KeyCode::Right => {
-                let len = text.len();
-                Screen::EntityRenaming(id, text, index_add_no_loop(offset, len))
+                prompt.offset = index_add_no_loop(prompt.offset, prompt.text.len());
+                Screen::Prompt(prompt)
             }
-            KeyCode::Enter => {
-                let _ = scene.set_entity_name(id, text);
-                Screen::EntityDetails(id, 0)
-            }
-            _ => Screen::EntityRenaming(id, text, offset),
+            KeyCode::Enter => prompt.on_submit.run(scene, prompt.text),
+            _ => Screen::Prompt(prompt),
         },
         state => {
             // Global Keybinds
@@ -201,7 +255,7 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         Screen::EntityDetails(id, component_index) => {
             draw_entity_detail(frame, scene, id, component_index)
         }
-        Screen::EntityRenaming(id, text, offset) => draw_entity_rename(frame, id, text, offset),
+        Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         _ => build_place_holer_not_implemented(frame, frame.area()),
     }
 }
@@ -301,20 +355,20 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
     frame.render_stateful_widget(list, inner_component_block, &mut list_state);
 }
 
-fn draw_entity_rename(frame: &mut Frame, id: Uuid, text: String, offset: usize) {
+fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
     let main_area = build_title_border(frame);
     let input_area = centered_rect(main_area, main_area.width.min(60), main_area.height.min(3));
 
-    let input = Paragraph::new(text)
+    let input = Paragraph::new(prompt.text.as_str())
         .block(
             Block::bordered()
                 .style(Color::Blue)
-                .title(format!("Rename Entity: {}", id)),
+                .title(prompt.title.as_str()),
         )
         .style(Color::White);
     frame.render_widget(input, input_area);
     frame.set_cursor_position(Position::new(
-        input_area.x + 1 + (offset as u16).min(input_area.width.saturating_sub(2)),
+        input_area.x + 1 + (prompt.offset as u16).min(input_area.width.saturating_sub(2)),
         input_area.y + 1,
     ));
 }
