@@ -7,7 +7,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Position, Rect},
-    style::{Color, Styled},
+    style::Color,
     symbols,
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
@@ -201,9 +201,7 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         Screen::EntityDetails(id, component_index) => {
             draw_entity_detail(frame, scene, id, component_index)
         }
-        Screen::EntityRenaming(id, text, offset) => {
-            draw_entity_rename(frame, scene, id, text, offset)
-        }
+        Screen::EntityRenaming(id, text, offset) => draw_entity_rename(frame, id, text, offset),
         _ => build_place_holer_not_implemented(frame, frame.area()),
     }
 }
@@ -303,8 +301,9 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
     frame.render_stateful_widget(list, inner_component_block, &mut list_state);
 }
 
-fn draw_entity_rename(frame: &mut Frame, scene: &Scene, id: Uuid, text: String, offset: usize) {
+fn draw_entity_rename(frame: &mut Frame, id: Uuid, text: String, offset: usize) {
     let main_area = build_title_border(frame);
+    let input_area = centered_rect(main_area, main_area.width.min(60), main_area.height.min(3));
 
     let input = Paragraph::new(text)
         .block(
@@ -313,11 +312,20 @@ fn draw_entity_rename(frame: &mut Frame, scene: &Scene, id: Uuid, text: String, 
                 .title(format!("Rename Entity: {}", id)),
         )
         .style(Color::White);
-    frame.render_widget(input, main_area);
+    frame.render_widget(input, input_area);
     frame.set_cursor_position(Position::new(
-        main_area.x + 1 + offset as u16,
-        main_area.y + 1,
+        input_area.x + 1 + (offset as u16).min(input_area.width.saturating_sub(2)),
+        input_area.y + 1,
     ));
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
 }
 
 fn build_title_border(frame: &mut Frame) -> Rect {
