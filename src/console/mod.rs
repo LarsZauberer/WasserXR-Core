@@ -15,11 +15,15 @@ use ratatui::{
 use wasserxr::{
     Uuid, attacher, detacher,
     error::{ComponentError, PluginError, SceneError},
-    scene::Scene,
+    scene::{
+        Scene,
+        logging::{LogEntry, LogLevel},
+    },
     system,
 };
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
+const LOG_TABS: [&str; 4] = ["DEBUG", "INFO", "WARN", "ERROR"];
 
 static TERMINAL: LazyLock<Mutex<Option<DefaultTerminal>>> = LazyLock::new(|| Mutex::new(None));
 static STATE: LazyLock<Mutex<Screen>> = LazyLock::new(|| Mutex::new(Screen::default()));
@@ -40,6 +44,10 @@ enum Screen {
     SystemList {
         index: usize,
         error: Option<String>,
+    },
+    LogList {
+        level: LogLevel,
+        scroll: usize,
     },
 }
 
@@ -349,9 +357,9 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 scene.should_exit();
                 Screen::EntityList(index)
             }
-            KeyCode::Char('h') | KeyCode::Left => Screen::SystemList {
-                index: 0,
-                error: None,
+            KeyCode::Char('h') | KeyCode::Left => Screen::LogList {
+                level: LogLevel::DEBUG,
+                scroll: 0,
             },
             KeyCode::Char('l') | KeyCode::Right => Screen::PluginList(0),
             KeyCode::Down | KeyCode::Char('j') => {
@@ -616,7 +624,10 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 Screen::SystemList { index, error }
             }
             KeyCode::Char('h') | KeyCode::Left => Screen::PluginList(0),
-            KeyCode::Char('l') | KeyCode::Right => Screen::EntityList(0),
+            KeyCode::Char('l') | KeyCode::Right => Screen::LogList {
+                level: LogLevel::DEBUG,
+                scroll: 0,
+            },
             KeyCode::Down | KeyCode::Char('j') => Screen::SystemList {
                 index: index_add_with_loop(index, scene.get_systems().len()),
                 error: None,
@@ -648,6 +659,37 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 }
             }
             _ => Screen::SystemList { index, error },
+        },
+        Screen::LogList { level, scroll } => match input {
+            KeyCode::Char('q') => {
+                scene.should_exit();
+                Screen::LogList { level, scroll }
+            }
+            KeyCode::Char('h') => Screen::SystemList {
+                index: 0,
+                error: None,
+            },
+            KeyCode::Char('l') => Screen::EntityList(0),
+            KeyCode::Left => Screen::LogList {
+                level: log_level_sub(level),
+                scroll: 0,
+            },
+            KeyCode::Right => Screen::LogList {
+                level: log_level_add(level),
+                scroll: 0,
+            },
+            KeyCode::Down | KeyCode::Char('j') => Screen::LogList {
+                level,
+                scroll: index_add_no_loop(
+                    scroll,
+                    filtered_logs(scene, level).len().saturating_sub(1),
+                ),
+            },
+            KeyCode::Up | KeyCode::Char('k') => Screen::LogList {
+                level,
+                scroll: index_sub_no_loop(scroll),
+            },
+            _ => Screen::LogList { level, scroll },
         },
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
@@ -717,6 +759,7 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         } => draw_component_detail(frame, scene, entity_id, &component_id, field_index),
         Screen::PluginList(index) => draw_plugin_list(frame, scene, index),
         Screen::SystemList { index, error } => draw_system_list(frame, scene, index, error),
+        Screen::LogList { level, scroll } => draw_log_list(frame, scene, level, scroll),
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         Screen::Error(error) => draw_error_screen(frame, &error),
     }
@@ -843,6 +886,71 @@ fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Optio
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, content_area, &mut list_state);
+}
+
+fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usize) {
+    let main_area = build_title_border(frame);
+    let (header_area, content_area) = split_header_content(main_area);
+    build_tab_header(frame, header_area, 3);
+
+    let (level_area, log_area) = split_header_content(content_area);
+    build_log_tab_header(frame, level_area, log_level_index(level));
+
+    let logs = filtered_logs(scene, level);
+    let lines: Vec<Line> = logs
+        .iter()
+        .map(|entry| {
+            Line::from(Span::styled(
+                format!("{entry}"),
+                log_color(entry.get_level()),
+            ))
+        })
+        .collect();
+
+    let scroll = scroll.min(lines.len().saturating_sub(1));
+    let list = Paragraph::new(lines).scroll((scroll as u16, 0));
+    frame.render_widget(list, log_area);
+}
+
+fn filtered_logs(scene: &Scene, level: LogLevel) -> Vec<LogEntry> {
+    scene
+        .iter_logs()
+        .filter(|entry| log_level_index(entry.get_level()) >= log_level_index(level))
+        .collect()
+}
+
+fn log_level_add(level: LogLevel) -> LogLevel {
+    match level {
+        LogLevel::DEBUG => LogLevel::INFO,
+        LogLevel::INFO => LogLevel::WARN,
+        LogLevel::WARN | LogLevel::ERROR => LogLevel::ERROR,
+    }
+}
+
+fn log_level_sub(level: LogLevel) -> LogLevel {
+    match level {
+        LogLevel::DEBUG | LogLevel::INFO => LogLevel::DEBUG,
+        LogLevel::WARN => LogLevel::INFO,
+        LogLevel::ERROR => LogLevel::WARN,
+    }
+}
+
+fn log_level_index(level: LogLevel) -> usize {
+    match level {
+        LogLevel::DEBUG => 0,
+        LogLevel::INFO => 1,
+        LogLevel::WARN => 2,
+        LogLevel::ERROR => 3,
+    }
+}
+
+fn log_color(level: LogLevel) -> Color {
+    match level {
+        LogLevel::DEBUG => Color::Blue,
+        LogLevel::INFO => Color::White,
+        LogLevel::WARN => Color::Yellow,
+        LogLevel::ERROR => Color::Red,
+    }
 }
 
 fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_index: usize) {
@@ -1061,6 +1169,16 @@ fn split_header_content(area: Rect) -> (Rect, Rect) {
 
 fn build_tab_header(frame: &mut Frame, header: Rect, index: usize) {
     let tab = ratatui::widgets::Tabs::new(TABS)
+        .style(Color::White)
+        .highlight_style(Color::Blue)
+        .select(index)
+        .divider(symbols::DOT)
+        .padding(" ", " ");
+    frame.render_widget(tab, header);
+}
+
+fn build_log_tab_header(frame: &mut Frame, header: Rect, index: usize) {
+    let tab = ratatui::widgets::Tabs::new(LOG_TABS)
         .style(Color::White)
         .highlight_style(Color::Blue)
         .select(index)
