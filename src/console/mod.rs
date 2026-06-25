@@ -4,7 +4,6 @@ use std::{
 };
 
 use crossterm::event::KeyCode;
-use log::debug;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Position, Rect},
@@ -13,7 +12,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
 };
-use wasserxr::{Uuid, attacher, detacher, scene::Scene, system};
+use wasserxr::{Uuid, attacher, detacher, error::SceneError, scene::Scene, system};
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 
@@ -24,6 +23,12 @@ static STATE: LazyLock<Mutex<Screen>> = LazyLock::new(|| Mutex::new(Screen::defa
 enum Screen {
     EntityList(usize),
     EntityDetails(Uuid, usize),
+    ComponentDetails {
+        entity_id: Uuid,
+        component_id: String,
+        component_index: usize,
+        field_index: usize,
+    },
     Prompt(TextPrompt),
     Error(ErrorScreen),
     PluginList(usize),
@@ -41,10 +46,20 @@ struct TextPrompt {
 
 impl TextPrompt {
     fn new(title: impl Into<String>, on_submit: PromptSubmit, on_cancel: Screen) -> Self {
+        Self::new_with_text(title, String::new(), on_submit, on_cancel)
+    }
+
+    fn new_with_text(
+        title: impl Into<String>,
+        text: String,
+        on_submit: PromptSubmit,
+        on_cancel: Screen,
+    ) -> Self {
+        let offset = text.len();
         Self {
             title: title.into(),
-            text: String::new(),
-            offset: 0,
+            text,
+            offset,
             on_submit,
             on_cancel: Box::new(on_cancel),
         }
@@ -70,6 +85,14 @@ impl ErrorScreen {
 enum PromptSubmit {
     RenameEntity(Uuid),
     CreateEntity,
+    CreateComponent(Uuid),
+    SetComponentField {
+        entity_id: Uuid,
+        component_id: String,
+        field_id: String,
+        component_index: usize,
+        field_index: usize,
+    },
 }
 
 impl PromptSubmit {
@@ -92,6 +115,53 @@ impl PromptSubmit {
                     )),
                 }
             }
+            Self::CreateComponent(entity_id) => {
+                let component_id = text;
+                match scene.add_component(entity_id, component_id.clone()) {
+                    Ok(()) => Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index: 0,
+                        field_index: 0,
+                    },
+                    Err(SceneError::EntityNotFound) => Screen::Error(ErrorScreen::new(
+                        format!("Entity {} no longer exists: EntityNotFound", entity_id),
+                        Screen::EntityDetails(entity_id, 0),
+                    )),
+                    Err(SceneError::ComponentCreation) => Screen::Error(ErrorScreen::new(
+                        format!(
+                            "Failed to create component {}: ComponentCreation",
+                            component_id
+                        ),
+                        Screen::EntityDetails(entity_id, 0),
+                    )),
+                    Err(error) => Screen::Error(ErrorScreen::new(
+                        format!("Failed to create component {}: {:?}", component_id, error),
+                        Screen::EntityDetails(entity_id, 0),
+                    )),
+                }
+            }
+            Self::SetComponentField {
+                entity_id,
+                component_id,
+                field_id,
+                component_index,
+                field_index,
+            } => {
+                let component_screen = Screen::ComponentDetails {
+                    entity_id,
+                    component_id: component_id.clone(),
+                    component_index,
+                    field_index,
+                };
+                match scene.parse_field(entity_id, &component_id, &field_id, &text) {
+                    Ok(()) => component_screen,
+                    Err(error) => Screen::Error(ErrorScreen::new(
+                        format!("Failed to set {}.{}: {:?}", component_id, field_id, error),
+                        component_screen,
+                    )),
+                }
+            }
         }
     }
 }
@@ -103,7 +173,7 @@ impl Default for Screen {
 }
 
 #[system]
-fn console(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
+fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     let Ok(mut state) = STATE.lock() else {
         return;
     };
@@ -245,7 +315,111 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::RenameEntity(id),
                 Screen::EntityDetails(id, 0),
             )),
+            KeyCode::Char('a') => Screen::Prompt(TextPrompt::new(
+                "New Component Name",
+                PromptSubmit::CreateComponent(id),
+                Screen::EntityDetails(id, component_index),
+            )),
+            KeyCode::Enter => {
+                if let Ok(components) = scene.get_entity_components(id)
+                    && let Some(component_id) = components.get(component_index)
+                {
+                    Screen::ComponentDetails {
+                        entity_id: id,
+                        component_id: component_id.clone(),
+                        component_index,
+                        field_index: 0,
+                    }
+                } else {
+                    Screen::EntityDetails(id, component_index)
+                }
+            }
             _ => Screen::EntityDetails(id, component_index),
+        },
+        Screen::ComponentDetails {
+            entity_id,
+            component_id,
+            component_index,
+            field_index,
+        } => match input {
+            KeyCode::Esc => Screen::EntityDetails(entity_id, component_index),
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Ok(fields) = scene.get_component_fields(entity_id, &component_id) {
+                    Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index,
+                        field_index: index_add_with_loop(field_index, fields.len()),
+                    }
+                } else {
+                    Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index,
+                        field_index,
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Ok(fields) = scene.get_component_fields(entity_id, &component_id) {
+                    Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index,
+                        field_index: index_sub_with_loop(field_index, fields.len()),
+                    }
+                } else {
+                    Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index,
+                        field_index,
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                if let Ok(fields) = scene.get_component_fields(entity_id, &component_id)
+                    && let Some(field_id) = fields.get(field_index)
+                {
+                    let component_screen = Screen::ComponentDetails {
+                        entity_id,
+                        component_id: component_id.clone(),
+                        component_index,
+                        field_index,
+                    };
+                    match scene.render_field(entity_id, &component_id, field_id) {
+                        Ok(current_value) => Screen::Prompt(TextPrompt::new_with_text(
+                            format!("Set {}.{}", component_id, field_id),
+                            current_value,
+                            PromptSubmit::SetComponentField {
+                                entity_id,
+                                component_id,
+                                field_id: field_id.clone(),
+                                component_index,
+                                field_index,
+                            },
+                            component_screen,
+                        )),
+                        Err(error) => Screen::Error(ErrorScreen::new(
+                            format!("Failed to read {}.{}: {:?}", component_id, field_id, error),
+                            component_screen,
+                        )),
+                    }
+                } else {
+                    Screen::ComponentDetails {
+                        entity_id,
+                        component_id,
+                        component_index,
+                        field_index,
+                    }
+                }
+            }
+            _ => Screen::ComponentDetails {
+                entity_id,
+                component_id,
+                component_index,
+                field_index,
+            },
         },
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
@@ -288,7 +462,7 @@ fn index_add_no_loop(index: usize, len: usize) -> usize {
 }
 
 fn index_add_with_loop(index: usize, len: usize) -> usize {
-    (index + 1) % len
+    if len == 0 { 0 } else { (index + 1) % len }
 }
 
 fn index_sub_no_loop(index: usize) -> usize {
@@ -296,7 +470,13 @@ fn index_sub_no_loop(index: usize) -> usize {
 }
 
 fn index_sub_with_loop(index: usize, len: usize) -> usize {
-    if index == 0 { len - 1 } else { index - 1 }
+    if len == 0 {
+        0
+    } else if index == 0 {
+        len - 1
+    } else {
+        index - 1
+    }
 }
 
 fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
@@ -305,6 +485,12 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         Screen::EntityDetails(id, component_index) => {
             draw_entity_detail(frame, scene, id, component_index)
         }
+        Screen::ComponentDetails {
+            entity_id,
+            component_id,
+            component_index: _,
+            field_index,
+        } => draw_component_detail(frame, scene, entity_id, &component_id, field_index),
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         Screen::Error(error) => draw_error_screen(frame, &error),
         _ => build_place_holer_not_implemented(frame, frame.area()),
@@ -404,6 +590,93 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, inner_component_block, &mut list_state);
+}
+
+fn draw_component_detail(
+    frame: &mut Frame,
+    scene: &Scene,
+    entity_id: Uuid,
+    component_id: &str,
+    field_index: usize,
+) {
+    let main_area = build_title_border(frame);
+    let (header_area, content_area) = split_header_content(main_area);
+    build_tab_header(frame, header_area, 0);
+
+    let component_header_area = Rect {
+        x: content_area.x,
+        y: content_area.y,
+        width: content_area.width,
+        height: content_area.height.min(3),
+    };
+
+    let fields_area = Rect {
+        x: content_area.x,
+        y: content_area.y.saturating_add(component_header_area.height),
+        width: content_area.width,
+        height: content_area
+            .height
+            .saturating_sub(component_header_area.height),
+    };
+
+    let plugin_id = scene
+        .get_entity_component_plugin_id(entity_id, component_id)
+        .unwrap_or("Unknown");
+    let plugin_label = if plugin_id.is_empty() {
+        "Static"
+    } else {
+        plugin_id
+    };
+
+    let component_line = Paragraph::new(left_right_line(
+        Span::raw(component_id.to_owned()),
+        Span::styled(format!("Plugin: {plugin_label}"), Color::DarkGray),
+        content_area.width,
+    ))
+    .block(Block::bordered().style(Color::White).title("Component"));
+    frame.render_widget(component_line, component_header_area);
+
+    let fields_block = Block::bordered().style(Color::White).title("Fields");
+    let inner_fields_block = fields_block.inner(fields_area);
+    frame.render_widget(fields_block, fields_area);
+
+    let Ok(fields) = scene.get_component_fields(entity_id, component_id) else {
+        let error = Paragraph::new("Failed to get component fields")
+            .style(Color::Red)
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(error, inner_fields_block);
+        return;
+    };
+
+    let field_items: Vec<ListItem> = fields
+        .iter()
+        .map(|field_id| {
+            let field_type = scene
+                .get_component_field_type(entity_id, component_id, field_id)
+                .map(|field_type| format!("{field_type:?}"))
+                .unwrap_or_else(|_| "Unknown".to_owned());
+            let value = scene
+                .render_field(entity_id, component_id, field_id)
+                .unwrap_or_else(|error| format!("{error:?}"));
+
+            ListItem::new(left_right_line(
+                Span::raw(format!("{field_id} ({field_type})")),
+                Span::styled(value, Color::DarkGray),
+                inner_fields_block.width,
+            ))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    if !field_items.is_empty() {
+        list_state.select(Some(field_index.min(field_items.len().saturating_sub(1))));
+    }
+
+    let list = List::new(field_items)
+        .style(Color::White)
+        .highlight_style(Color::Blue);
+
+    frame.render_stateful_widget(list, inner_fields_block, &mut list_state);
 }
 
 fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
