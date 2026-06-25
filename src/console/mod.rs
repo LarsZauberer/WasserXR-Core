@@ -37,7 +37,10 @@ enum Screen {
     Prompt(TextPrompt),
     Error(ErrorScreen),
     PluginList(usize),
-    SystemList(usize),
+    SystemList {
+        index: usize,
+        error: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -164,6 +167,11 @@ fn plugin_error_reason(error: &PluginError) -> String {
 enum PromptSubmit {
     RenameEntity(Uuid),
     CreateEntity,
+    CreatePlugin,
+    CreateSystemId,
+    CreateSystemPriority {
+        system_id: String,
+    },
     CreateComponent(Uuid),
     SetComponentField {
         entity_id: Uuid,
@@ -194,6 +202,40 @@ impl PromptSubmit {
                     )),
                 }
             }
+            Self::CreatePlugin => match scene.load_plugin(text) {
+                Ok(()) => Screen::PluginList(0),
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    scene_error_message(&error),
+                    Screen::PluginList(0),
+                )),
+            },
+            Self::CreateSystemId => Screen::Prompt(TextPrompt::new(
+                "System Priority",
+                PromptSubmit::CreateSystemPriority { system_id: text },
+                Screen::SystemList {
+                    index: 0,
+                    error: None,
+                },
+            )),
+            Self::CreateSystemPriority { system_id } => match text.parse::<usize>() {
+                Ok(priority) => match scene.add_system(system_id, priority) {
+                    Ok(()) => Screen::SystemList {
+                        index: 0,
+                        error: None,
+                    },
+                    Err(error) => Screen::Error(ErrorScreen::new(
+                        scene_error_message(&error),
+                        Screen::SystemList {
+                            index: 0,
+                            error: None,
+                        },
+                    )),
+                },
+                Err(_) => Screen::SystemList {
+                    index: 0,
+                    error: Some("System priority must be a usize".to_owned()),
+                },
+            },
             Self::CreateComponent(entity_id) => {
                 let component_id = text;
                 match scene.add_component(entity_id, component_id.clone()) {
@@ -307,7 +349,10 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 scene.should_exit();
                 Screen::EntityList(index)
             }
-            KeyCode::Char('h') | KeyCode::Left => Screen::SystemList(0),
+            KeyCode::Char('h') | KeyCode::Left => Screen::SystemList {
+                index: 0,
+                error: None,
+            },
             KeyCode::Char('l') | KeyCode::Right => Screen::PluginList(0),
             KeyCode::Down | KeyCode::Char('j') => {
                 Screen::EntityList(index_add_with_loop(index, scene.get_entities().len()))
@@ -514,6 +559,96 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 field_index,
             },
         },
+        Screen::PluginList(index) => match input {
+            KeyCode::Char('r') => match scene.reload() {
+                Ok(()) => Screen::PluginList(index),
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    scene_error_message(&error),
+                    Screen::PluginList(index),
+                )),
+            },
+            KeyCode::Char('q') => {
+                scene.should_exit();
+                Screen::PluginList(index)
+            }
+            KeyCode::Char('h') | KeyCode::Left => Screen::EntityList(0),
+            KeyCode::Char('l') | KeyCode::Right => Screen::SystemList {
+                index: 0,
+                error: None,
+            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                Screen::PluginList(index_add_with_loop(index, plugin_items(scene).len()))
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                Screen::PluginList(index_sub_with_loop(index, plugin_items(scene).len()))
+            }
+            KeyCode::Char('a') => Screen::Prompt(TextPrompt::new(
+                "Plugin Path",
+                PromptSubmit::CreatePlugin,
+                Screen::PluginList(index),
+            )),
+            KeyCode::Char('D') => {
+                let plugins = plugin_items(scene);
+                if let Some((_, plugin_id)) = plugins.get(index) {
+                    match scene.unload_plugin(plugin_id) {
+                        Ok(()) => Screen::PluginList(index.min(plugins.len().saturating_sub(2))),
+                        Err(error) => Screen::Error(ErrorScreen::new(
+                            scene_error_message(&error),
+                            Screen::PluginList(index),
+                        )),
+                    }
+                } else {
+                    Screen::PluginList(index)
+                }
+            }
+            _ => Screen::PluginList(index),
+        },
+        Screen::SystemList { index, error } => match input {
+            KeyCode::Char('r') => match scene.reload() {
+                Ok(()) => Screen::SystemList { index, error },
+                Err(error) => Screen::Error(ErrorScreen::new(
+                    scene_error_message(&error),
+                    Screen::SystemList { index, error: None },
+                )),
+            },
+            KeyCode::Char('q') => {
+                scene.should_exit();
+                Screen::SystemList { index, error }
+            }
+            KeyCode::Char('h') | KeyCode::Left => Screen::PluginList(0),
+            KeyCode::Char('l') | KeyCode::Right => Screen::EntityList(0),
+            KeyCode::Down | KeyCode::Char('j') => Screen::SystemList {
+                index: index_add_with_loop(index, scene.get_systems().len()),
+                error: None,
+            },
+            KeyCode::Up | KeyCode::Char('k') => Screen::SystemList {
+                index: index_sub_with_loop(index, scene.get_systems().len()),
+                error: None,
+            },
+            KeyCode::Char('a') => Screen::Prompt(TextPrompt::new(
+                "System ID",
+                PromptSubmit::CreateSystemId,
+                Screen::SystemList { index, error: None },
+            )),
+            KeyCode::Char('D') => {
+                let systems = scene.get_systems();
+                if let Some(system_id) = systems.get(index) {
+                    match scene.remove_system(system_id) {
+                        Ok(()) => Screen::SystemList {
+                            index: index.min(systems.len().saturating_sub(2)),
+                            error: None,
+                        },
+                        Err(error) => Screen::Error(ErrorScreen::new(
+                            scene_error_message(&error),
+                            Screen::SystemList { index, error: None },
+                        )),
+                    }
+                } else {
+                    Screen::SystemList { index, error }
+                }
+            }
+            _ => Screen::SystemList { index, error },
+        },
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
             KeyCode::Backspace => {
@@ -543,10 +678,6 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Char('q') | KeyCode::Enter | KeyCode::Esc => *error.on_close,
             _ => Screen::Error(error),
         },
-        state => {
-            // Global Keybinds
-            state
-        }
     }
 }
 
@@ -584,9 +715,10 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
             component_index: _,
             field_index,
         } => draw_component_detail(frame, scene, entity_id, &component_id, field_index),
+        Screen::PluginList(index) => draw_plugin_list(frame, scene, index),
+        Screen::SystemList { index, error } => draw_system_list(frame, scene, index, error),
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         Screen::Error(error) => draw_error_screen(frame, &error),
-        _ => build_place_holer_not_implemented(frame, frame.area()),
     }
 }
 
@@ -620,6 +752,95 @@ fn draw_entity_list(frame: &mut Frame, scene: &Scene, index: usize) {
     if !entity_ids.is_empty() {
         list_state.select(Some(index));
     }
+
+    frame.render_stateful_widget(list, content_area, &mut list_state);
+}
+
+fn plugin_items(scene: &Scene) -> Vec<(String, String)> {
+    let mut plugins = vec![("Statically Linked".to_owned(), String::new())];
+    plugins.extend(
+        scene
+            .get_plugins()
+            .into_iter()
+            .map(|plugin| (plugin.clone(), plugin)),
+    );
+    plugins
+}
+
+fn plugin_label(plugin_id: &str) -> String {
+    if plugin_id.is_empty() {
+        "Statically Linked".to_owned()
+    } else {
+        plugin_id.to_owned()
+    }
+}
+
+fn draw_plugin_list(frame: &mut Frame, scene: &Scene, index: usize) {
+    let main_area = build_title_border(frame);
+    let (header_area, content_area) = split_header_content(main_area);
+    build_tab_header(frame, header_area, 1);
+
+    let plugins = plugin_items(scene);
+    let items: Vec<ListItem> = plugins
+        .iter()
+        .map(|(display, _)| ListItem::new(display.clone()))
+        .collect();
+
+    let mut list_state = ListState::default();
+    if !items.is_empty() {
+        list_state.select(Some(index.min(items.len().saturating_sub(1))));
+    }
+
+    let list = List::new(items)
+        .style(Color::White)
+        .highlight_style(Color::Blue);
+
+    frame.render_stateful_widget(list, content_area, &mut list_state);
+}
+
+fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Option<String>) {
+    let main_area = build_title_border(frame);
+    let (header_area, mut content_area) = split_header_content(main_area);
+    build_tab_header(frame, header_area, 2);
+
+    if let Some(error) = error {
+        let error_area = Rect {
+            x: content_area.x,
+            y: content_area.y,
+            width: content_area.width,
+            height: content_area.height.min(1),
+        };
+        let error_text = Paragraph::new(error).style(Color::Red);
+        frame.render_widget(error_text, error_area);
+        content_area.y = content_area.y.saturating_add(error_area.height);
+        content_area.height = content_area.height.saturating_sub(error_area.height);
+    }
+
+    let systems = scene.get_systems();
+    let items: Vec<ListItem> = systems
+        .iter()
+        .map(|system_id| {
+            let plugin_id = scene
+                .get_system_plugin_id(system_id)
+                .map(plugin_label)
+                .unwrap_or_else(|_| "Unknown".to_owned());
+
+            ListItem::new(left_right_line(
+                Span::raw(system_id.clone()),
+                Span::styled(plugin_id, Color::DarkGray),
+                content_area.width,
+            ))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    if !items.is_empty() {
+        list_state.select(Some(index.min(items.len().saturating_sub(1))));
+    }
+
+    let list = List::new(items)
+        .style(Color::White)
+        .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, content_area, &mut list_state);
 }
@@ -863,12 +1084,4 @@ fn left_right_line<'a>(
     let spacing = spacing.saturating_sub(left_width + right_width);
 
     Line::from(vec![left, Span::raw(" ".repeat(spacing)), right])
-}
-
-fn build_place_holer_not_implemented(frame: &mut Frame, area: Rect) {
-    let text = Paragraph::new("Not implemented!")
-        .style(Color::Red)
-        .alignment(ratatui::layout::Alignment::Center);
-
-    frame.render_widget(text, area);
 }
