@@ -126,6 +126,7 @@ fn scene_error_message(error: &SceneError) -> String {
             format!("scene deserialization failed: {message}")
         }
         SceneError::FileIo(message) => format!("file operation failed: {message}"),
+        _ => "Unknown Error".to_string(),
     }
 }
 
