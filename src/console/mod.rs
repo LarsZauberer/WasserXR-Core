@@ -159,6 +159,7 @@ fn component_error_reason(error: &ComponentError) -> String {
         ComponentError::FieldValueParsing => {
             "the entered value is not valid for this field type".to_owned()
         }
+        _ => "Unknown Error".to_string(),
     }
 }
 
@@ -169,6 +170,7 @@ fn plugin_error_reason(error: &PluginError) -> String {
             format!("the plugin is missing required symbol `{symbol}`")
         }
         PluginError::InvalidSymbol => "a symbol name contains an invalid null byte".to_owned(),
+        _ => "Unknown Error".to_string(),
     }
 }
 
