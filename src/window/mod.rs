@@ -1,2 +1,2 @@
-pub mod input_reader;
-pub mod window;
+pub mod component;
+pub mod system;

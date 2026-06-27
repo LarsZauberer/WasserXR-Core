@@ -9,7 +9,7 @@ use glium::{
 };
 use wasserxr::{Uuid, debug, scene::Scene, system, warn};
 
-use crate::window::window::Display;
+use crate::window::component::Display;
 
 struct InputGetterApp<'a> {
     events: &'a mut Vec<WindowEvent>,
