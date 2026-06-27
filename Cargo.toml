@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.28.1"
+glium = "0.36.0"
 log = "0.4.32"
 ratatui = "0.29.0"
 wasserxr = { version = "0.1.0", path = "../WasserXR" }
