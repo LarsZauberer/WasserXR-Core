@@ -136,12 +136,15 @@ fn window_close(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 fn make_window(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     let window = scene.add_entity();
     let _ = scene.set_entity_name(window, "Window".to_owned());
-
     let _ = scene.add_component(window, "Window".to_owned());
+
+    let entity = scene.add_entity();
+    let _ = scene.set_entity_name(entity, "Camera".to_owned());
+    let _ = scene.add_component(entity, "Camera".to_owned());
 
     let _ = scene.add_system("window_input_reset".to_owned(), 1);
     let _ = scene.add_system("window_input_read".to_owned(), 1000);
-    let _ = scene.add_system("window_clear".to_owned(), 100);
+    let _ = scene.add_system("renderer".to_owned(), 100);
     let _ = scene.add_system("window_close".to_owned(), 200);
 
     let _ = scene.remove_system("make_window");
