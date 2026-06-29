@@ -55,6 +55,9 @@
           buildInputs = [
             nightlyRust
             pkgs.cargo-llvm-cov
+
+            pkgs.cmake
+            pkgs.zlib
           ];
 
           shellHook = "";
