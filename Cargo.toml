@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 asset-importer = { version = "0.8.0", features = ["static-link"] }
 crossterm = "0.28.1"
+glam = "0.33.2"
 glium = "0.36.0"
 log = "0.4.32"
 ratatui = "0.29.0"
