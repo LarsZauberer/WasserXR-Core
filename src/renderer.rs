@@ -55,7 +55,10 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         let model_path = model_path.clone();
         let shader_path = shader_path.clone();
 
-        if scene.ensure_asset_loaded("Shader", &shader_path).is_err() {
+        if scene
+            .ensure_asset_loaded("ShaderAsset", &shader_path)
+            .is_err()
+        {
             continue;
         }
 
@@ -67,7 +70,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         }
 
         let Ok((shader_program,)) =
-            scene.asset_query_loaded::<(&Program,)>("Shader", &shader_path, &["shader"])
+            scene.asset_query_loaded::<(&Program,)>("ShaderAsset", &shader_path, &["shader"])
         else {
             continue;
         };

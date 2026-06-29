@@ -6,12 +6,12 @@ use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
 use crate::window::component::Display;
 
 #[asset_type]
-struct Shader {
+struct ShaderAsset {
     shader: Program,
 }
 
-#[asset_type_creator(Shader)]
-fn shader_creator(scene: &mut Scene, path: &str) -> Option<Shader> {
+#[asset_type_creator(ShaderAsset)]
+fn shader_creator(scene: &mut Scene, path: &str) -> Option<ShaderAsset> {
     let vertex_path = path.to_owned() + ".vert";
     let fragment_path = path.to_owned() + ".frag";
 
@@ -62,5 +62,5 @@ fn shader_creator(scene: &mut Scene, path: &str) -> Option<Shader> {
             return None;
         }
     };
-    Some(Shader { shader: program })
+    Some(ShaderAsset { shader: program })
 }
