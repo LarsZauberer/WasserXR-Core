@@ -1,5 +1,5 @@
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
-use glium::{Program, Surface, dynamic_uniform, winit::window::Window};
+use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
 use wasserxr::{Uuid, scene::Scene, system, warn};
 
 use crate::{model_asset::Mesh, window::component::Display};
@@ -58,7 +58,16 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     }
 
     let mut frame = display.draw();
-    frame.clear_color(0.0, 0.0, 0.0, 1.0);
+    frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
+
+    let draw_params = DrawParameters {
+        depth: glium::Depth {
+            test: glium::DepthTest::IfLess,
+            write: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     for entity in &entities[2] {
         // Get all assets and information
@@ -149,7 +158,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
                 &mesh.indices,
                 shader_program,
                 &uniforms,
-                &Default::default(),
+                &draw_params,
             ) {
                 Ok(_) => {}
                 Err(err) => {
