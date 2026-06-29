@@ -8,9 +8,10 @@ use crate::window::component::Display;
 pub struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    tex_coord: [f32; 2],
 }
 
-glium::implement_vertex!(Vertex, position, normal);
+glium::implement_vertex!(Vertex, position, normal, tex_coord);
 
 pub struct Mesh {
     pub vertices: VertexBuffer<Vertex>,
@@ -50,12 +51,17 @@ fn create_model_asset(scene: &mut Scene, path: &str) -> Option<ModelAsset> {
                 .normals_iter()
                 .map(|normals| [normals.x, normals.y, normals.z])
                 .collect::<Vec<[f32; 3]>>();
+            let tex_coords = mesh.texture_coords2(0).unwrap_or_default();
             let vertices = vertices
                 .into_iter()
                 .enumerate()
                 .map(|(index, position)| Vertex {
                     position,
                     normal: normals.get(index).copied().unwrap_or([0.0, 0.0, 0.0]),
+                    tex_coord: tex_coords
+                        .get(index)
+                        .map(|tex_coord| [tex_coord.x, tex_coord.y])
+                        .unwrap_or([0.0, 0.0]),
                 })
                 .collect::<Vec<Vertex>>();
             let indices = mesh.triangles().into_iter().flatten().collect::<Vec<u32>>();
