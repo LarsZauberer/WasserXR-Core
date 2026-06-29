@@ -141,6 +141,7 @@ fn make_window(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     let entity = scene.add_entity();
     let _ = scene.set_entity_name(entity, "Camera".to_owned());
     let _ = scene.add_component(entity, "Camera".to_owned());
+    let _ = scene.add_component(entity, "Transform".to_owned());
 
     let _ = scene.add_system("window_input_reset".to_owned(), 1);
     let _ = scene.add_system("window_input_read".to_owned(), 1000);
