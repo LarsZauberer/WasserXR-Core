@@ -3,6 +3,7 @@ pub(crate) mod console;
 pub mod errors;
 pub(crate) mod model;
 pub(crate) mod model_asset;
+pub(crate) mod renderer;
 pub(crate) mod shader;
 pub(crate) mod transform;
 pub(crate) mod window;
