@@ -22,7 +22,7 @@ fn shader_creator(scene: &mut Scene, path: &str) -> Option<Shader> {
         );
         return None;
     };
-    let Ok(fragment) = fs::read_to_string(&vertex_path) else {
+    let Ok(fragment) = fs::read_to_string(&fragment_path) else {
         warn!(
             scene,
             "Failed to find the fragment shader code: {}", fragment_path
