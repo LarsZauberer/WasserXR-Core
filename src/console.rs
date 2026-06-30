@@ -1,8 +1,4 @@
-use std::{
-    io::Read,
-    os::fd::AsRawFd,
-    sync::{LazyLock, Mutex},
-};
+use std::{cell::RefCell, io::Read, os::fd::AsRawFd};
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -14,20 +10,48 @@ use ratatui::{
     widgets::{Block, List, ListItem, ListState, Paragraph, Wrap},
 };
 use wasserxr::{
-    Uuid, attacher, detacher,
+    Uuid, attacher,
     error::{ComponentError, PluginError, SceneError},
     scene::{
         Scene,
         logging::{LogEntry, LogLevel},
     },
-    system, warn,
+    system,
 };
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 const LOG_TABS: [&str; 4] = ["DEBUG", "INFO", "WARN", "ERROR"];
+const TERMINAL_RESOURCE: &str = "console_terminal";
+const STATE_RESOURCE: &str = "console_state";
 
-static TERMINAL: LazyLock<Mutex<Option<DefaultTerminal>>> = LazyLock::new(|| Mutex::new(None));
-static STATE: LazyLock<Mutex<Screen>> = LazyLock::new(|| Mutex::new(Screen::default()));
+struct ConsoleTerminal {
+    terminal: DefaultTerminal,
+}
+
+impl ConsoleTerminal {
+    fn new() -> Self {
+        Self {
+            terminal: ratatui::init(),
+        }
+    }
+
+    fn draw<F>(&mut self, render_callback: F)
+    where
+        F: FnOnce(&mut Frame),
+    {
+        let _ = self.terminal.draw(render_callback);
+    }
+
+    fn recreate(&mut self) {
+        ratatui::restore();
+    }
+}
+
+impl Drop for ConsoleTerminal {
+    fn drop(&mut self) {
+        self.recreate();
+    }
+}
 
 #[derive(Clone)]
 enum Screen {
@@ -296,40 +320,50 @@ impl Default for Screen {
 
 #[system]
 fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
-    let Ok(mut state) = STATE.lock() else {
+    let mut state = scene
+        .get_resource::<Screen>(STATE_RESOURCE)
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(key) = get_input() {
+        state = transition(scene, key, state);
+    }
+
+    set_resource(scene, STATE_RESOURCE, state.clone());
+
+    let Ok(terminal) = scene.get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE) else {
         return;
     };
 
-    if let Some(key) = get_input() {
-        *state = transition(scene, key, state.clone());
-    }
-
-    if let Ok(mut terminal) = TERMINAL.lock()
-        && let Some(terminal) = terminal.as_mut()
-    {
-        let _ = terminal.draw(|frame| {
-            draw(frame, scene, state.clone());
-        });
-    }
+    terminal.borrow_mut().draw(|frame| {
+        draw(frame, scene, state.clone());
+    });
 }
 
 #[attacher(console)]
 fn console_attacher(scene: &mut Scene) {
-    // Add the terminal
-    if let Ok(mut terminal) = TERMINAL.lock() {
-        *terminal = Some(ratatui::init());
-    } else {
-        warn!(scene, "Console Ratatui has already been initalized");
+    create_resource(scene, STATE_RESOURCE, Screen::default);
+    create_resource(scene, TERMINAL_RESOURCE, || {
+        RefCell::new(ConsoleTerminal::new())
+    });
+}
+
+fn create_resource<T>(scene: &mut Scene, name: &str, func: fn() -> T) {
+    match scene.get_mut_resource::<T>(name) {
+        Ok(_) => {}
+        Err(_) => {
+            let _ = scene.add_resource(name.to_owned(), func());
+        }
     }
 }
 
-#[detacher(console)]
-fn console_detacher(_scene: &mut Scene) {
-    // Remove the terminal
-    if let Ok(mut terminal) = TERMINAL.lock() {
-        let _ = terminal.take();
+fn set_resource<T>(scene: &mut Scene, name: &str, value: T) {
+    match scene.get_mut_resource::<T>(name) {
+        Ok(resource) => *resource = value,
+        Err(_) => {
+            let _ = scene.add_resource(name.to_owned(), value);
+        }
     }
-    ratatui::restore();
 }
 
 fn get_input() -> Option<KeyCode> {
