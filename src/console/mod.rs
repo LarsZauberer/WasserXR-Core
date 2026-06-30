@@ -536,6 +536,16 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                         component_index,
                         field_index,
                     };
+                    let is_mutable = scene
+                        .is_component_field_mutable(entity_id, &component_id, field_id)
+                        .unwrap_or(false);
+                    let is_string_parsable = scene
+                        .is_component_field_string_parsable(entity_id, &component_id, field_id)
+                        .unwrap_or(false);
+                    if !(is_mutable && is_string_parsable) {
+                        return component_screen;
+                    }
+
                     match scene.render_field(entity_id, &component_id, field_id) {
                         Ok(current_value) => Screen::Prompt(TextPrompt::new_with_text(
                             format!("Set {}.{}", component_id, field_id),
@@ -1076,16 +1086,27 @@ fn draw_component_detail(
     let field_items: Vec<ListItem> = fields
         .iter()
         .map(|field_id| {
-            let field_type = scene
-                .get_component_field_type(entity_id, component_id, field_id)
+            let field_type = scene.get_component_field_type(entity_id, component_id, field_id);
+            let is_mutable = scene
+                .is_component_field_mutable(entity_id, component_id, field_id)
+                .unwrap_or(false);
+            let is_string_parsable = scene
+                .is_component_field_string_parsable(entity_id, component_id, field_id)
+                .unwrap_or(false);
+            let field_type = field_type
                 .map(|field_type| format!("{field_type:?}"))
                 .unwrap_or_else(|_| "Unknown".to_owned());
             let value = scene
                 .render_field(entity_id, component_id, field_id)
                 .unwrap_or_else(|error| format!("{error:?}"));
+            let field_color = if is_mutable && is_string_parsable {
+                Color::White
+            } else {
+                Color::Red
+            };
 
             ListItem::new(left_right_line(
-                Span::raw(format!("{field_id} ({field_type})")),
+                Span::styled(format!("{field_id} ({field_type})"), field_color),
                 Span::styled(value, Color::DarkGray),
                 inner_fields_block.width,
             ))
