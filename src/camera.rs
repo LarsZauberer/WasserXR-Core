@@ -1,4 +1,4 @@
-use wasserxr::component;
+use wasserxr::{component, component_creator, scene::Scene};
 
 #[component]
 struct Camera {
@@ -20,4 +20,9 @@ impl Default for Camera {
             far: 1000.0,
         }
     }
+}
+
+#[component_creator(Camera)]
+fn create_transform(_scene: &mut Scene) -> Option<Camera> {
+    Some(Camera::default())
 }

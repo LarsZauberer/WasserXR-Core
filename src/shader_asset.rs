@@ -1,9 +1,9 @@
 use std::fs;
 
-use glium::Program;
+use glium::{Program, winit::window::Window};
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
 
-use crate::window::component::Display;
+use crate::renderer::Display;
 
 #[asset_type]
 struct ShaderAsset {
@@ -31,10 +31,9 @@ fn shader_creator(scene: &mut Scene, path: &str) -> Option<ShaderAsset> {
     };
 
     // Get the opengl context
-    let window_entity = scene.get_entity_with_component("Window")?;
-    let (display,) = scene
-        .query::<(&Display,)>(window_entity, "Window", &["display"])
-        .ok()?;
+    let Ok((_, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
+        return None;
+    };
 
     let program = match Program::from_source(display, &vertex, &fragment, None) {
         Ok(program) => program,

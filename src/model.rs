@@ -1,4 +1,4 @@
-use wasserxr::component;
+use wasserxr::{component, component_creator, scene::Scene};
 
 #[component]
 #[derive(Default)]
@@ -8,4 +8,9 @@ struct Model {
 
     #[mutable]
     shader: String,
+}
+
+#[component_creator(Model)]
+fn create_model(_scene: &mut Scene) -> Option<Model> {
+    Some(Model::default())
 }

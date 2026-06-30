@@ -1,33 +1,45 @@
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
 use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
-use wasserxr::{Uuid, scene::Scene, system, warn};
+use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
-use crate::{model_asset::Mesh, window::component::Display};
+use crate::{model_asset::Mesh, window::get_event_loop};
 
-#[system(entities=[["Window"], ["Camera"], ["Model"]])]
+pub type Display = glium::backend::glutin::Display<glium::glutin::surface::WindowSurface>;
+
+pub(crate) fn get_window_display(scene: &mut Scene) -> &mut (Window, Display) {
+    if scene
+        .get_resource::<(Window, Display)>("render_window")
+        .is_err()
+    {
+        let event_loop = get_event_loop(scene);
+        let rendering_window = glium::backend::glutin::SimpleWindowBuilder::new().build(event_loop);
+        let _ =
+            scene.add_resource::<(Window, Display)>("render_window".to_owned(), rendering_window);
+    }
+
+    scene
+        .get_mut_resource::<(Window, Display)>("render_window")
+        .expect("Failed to get the Rendering Window")
+}
+
+#[attacher(renderer)]
+fn renderer_attach(scene: &mut Scene) {
+    let _ = get_window_display(scene);
+}
+
+#[system(entities=[["Camera"], ["Model"]])]
 fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
-    // Check if there is a window and a camera
+    // Check if there is a camera
     if entities[0].is_empty() {
         return;
     }
-    if entities[1].is_empty() {
-        return;
-    }
 
-    // Get the window and camera entity
-    let window_entity = entities[0][0];
-    let camera_entity = entities[1][0];
-
-    // Getting the OpenGL Context
-    let Ok((display, window)) =
-        scene.query::<(&Display, &Window)>(window_entity, "Window", &["display", "window"])
-    else {
-        warn!(
-            scene,
-            "Failed to get the OpenGL context from the Window entity: {}", window_entity
-        );
+    let Ok((window, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
         return;
     };
+
+    // Get the window and camera entity
+    let camera_entity = entities[0][0];
 
     // Getting Camera Specs
     let Ok((fov, near, far)) =
@@ -69,7 +81,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         ..Default::default()
     };
 
-    for entity in &entities[2] {
+    for entity in &entities[1] {
         // Get all assets and information
         let Ok((model_path, shader_path)) =
             scene.query::<(&String, &String)>(*entity, "Model", &["model", "shader"])
