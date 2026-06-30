@@ -1,7 +1,6 @@
 use wasserxr::component;
 
 #[component]
-#[derive(Default)]
 struct Camera {
     #[mutable]
     fov: f32,
@@ -11,4 +10,14 @@ struct Camera {
 
     #[mutable]
     far: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            fov: 90.0,
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
 }

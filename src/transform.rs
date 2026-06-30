@@ -1,7 +1,8 @@
+use std::default;
+
 use wasserxr::component;
 
 #[component]
-#[derive(Default)]
 pub struct Transform {
     #[mutable]
     pub position: [f32; 3],
@@ -11,6 +12,16 @@ pub struct Transform {
 
     #[mutable]
     pub scale: [f32; 3],
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: [1.0; 3],
+        }
+    }
 }
 
 #[cfg(test)]
