@@ -1,6 +1,7 @@
 use std::{
+    io::Read,
+    os::fd::AsRawFd,
     sync::{LazyLock, Mutex},
-    time::Duration,
 };
 
 use crossterm::event::KeyCode;
@@ -332,18 +333,51 @@ fn console_detacher(_scene: &mut Scene) {
 }
 
 fn get_input() -> Option<KeyCode> {
-    if let Ok(true) = crossterm::event::poll(Duration::from_secs(0)) {
-        if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
-            if key.kind == crossterm::event::KeyEventKind::Press {
-                Some(key.code)
-            } else {
-                None
-            }
-        } else {
-            None
+    // Do not use crossterm::event::poll/read here. On Unix, Crossterm lazily
+    // registers a process-wide SIGWINCH handler for resize events and assumes
+    // that handler lives for the whole process. This console is hot-reloaded as
+    // a cdylib, so that handler can outlive the unloaded plugin code and crash
+    // the next time the terminal is resized.
+    let mut stdin = std::io::stdin();
+
+    // PollFd mirrors libc's `struct pollfd`: `events` asks for readable stdin,
+    // and libc's `poll` fills `revents`; timeout 0 keeps the ECS tick nonblocking.
+    let mut poll_fd = libc::pollfd {
+        fd: stdin.as_raw_fd(),
+        events: 1,
+        revents: 0,
+    };
+
+    let ready = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+    // `ready <= 0` means error/no input; missing 1 means stdin is not readable.
+    if ready <= 0 || poll_fd.revents & 1 == 0 {
+        return None;
+    }
+
+    // The terminal is in raw mode, so keys arrive as bytes. Read a small chunk:
+    // enough for the escape sequences this console handles.
+    let mut bytes = [0; 8];
+    let len = stdin.read(&mut bytes).ok()?;
+    parse_key(&bytes[..len])
+}
+
+fn parse_key(bytes: &[u8]) -> Option<KeyCode> {
+    match bytes {
+        [] => None,
+        [b'\r' | b'\n', ..] => Some(KeyCode::Enter),
+        [0x7f | 0x08, ..] => Some(KeyCode::Backspace),
+        [0x1b, b'[', b'A', ..] => Some(KeyCode::Up),
+        [0x1b, b'[', b'B', ..] => Some(KeyCode::Down),
+        [0x1b, b'[', b'C', ..] => Some(KeyCode::Right),
+        [0x1b, b'[', b'D', ..] => Some(KeyCode::Left),
+        [0x1b, ..] => Some(KeyCode::Esc),
+        [byte, ..] if byte.is_ascii() && !byte.is_ascii_control() => {
+            Some(KeyCode::Char(*byte as char))
         }
-    } else {
-        None
+        bytes => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| text.chars().next())
+            .map(KeyCode::Char),
     }
 }
 
@@ -761,6 +795,10 @@ fn index_sub_with_loop(index: usize, len: usize) -> usize {
 }
 
 fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
+    if !can_draw_console(frame.area()) {
+        return;
+    }
+
     match state {
         Screen::EntityList(index) => draw_entity_list(frame, scene, index),
         Screen::EntityDetails(id, component_index) => {
@@ -778,6 +816,10 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         Screen::Error(error) => draw_error_screen(frame, &error),
     }
+}
+
+fn can_draw_console(area: Rect) -> bool {
+    area.width >= 2 && area.height >= 2
 }
 
 fn draw_entity_list(frame: &mut Frame, scene: &Scene, index: usize) {
@@ -1139,10 +1181,12 @@ fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
         )
         .style(Color::White);
     frame.render_widget(input, input_area);
-    frame.set_cursor_position(Position::new(
-        input_area.x + 1 + (prompt.offset as u16).min(input_area.width.saturating_sub(2)),
-        input_area.y + 1,
-    ));
+    if input_area.width > 2 && input_area.height > 2 {
+        frame.set_cursor_position(Position::new(
+            input_area.x + 1 + (prompt.offset as u16).min(input_area.width.saturating_sub(2)),
+            input_area.y + 1,
+        ));
+    }
 }
 
 fn draw_error_screen(frame: &mut Frame, error: &ErrorScreen) {

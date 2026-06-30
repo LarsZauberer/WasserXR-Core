@@ -2295,6 +2295,7 @@ dependencies = [
  "crossterm",
  "glam",
  "glium",
+ "libc",
  "log",
  "ratatui",
  "wasserxr",
