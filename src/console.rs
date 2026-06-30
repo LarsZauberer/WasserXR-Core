@@ -19,7 +19,7 @@ use wasserxr::{
         Scene,
         logging::{LogEntry, LogLevel},
     },
-    system,
+    system, warn,
 };
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
@@ -313,10 +313,12 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 }
 
 #[attacher(console)]
-fn console_attacher(_scene: &mut Scene) {
+fn console_attacher(scene: &mut Scene) {
     // Add the terminal
     if let Ok(mut terminal) = TERMINAL.lock() {
         *terminal = Some(ratatui::init());
+    } else {
+        warn!(scene, "Console Ratatui has already been initalized");
     }
 }
 
