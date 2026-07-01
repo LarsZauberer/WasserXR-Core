@@ -858,7 +858,7 @@ fn can_draw_console(area: Rect) -> bool {
 
 fn draw_entity_list(frame: &mut Frame, scene: &Scene, index: usize) {
     let main_area = build_title_border(frame);
-    let (header_area, content_area) = split_header_content(main_area);
+    let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 0);
 
     let entity_ids = scene.get_entities();
@@ -888,6 +888,11 @@ fn draw_entity_list(frame: &mut Frame, scene: &Scene, index: usize) {
     }
 
     frame.render_stateful_widget(list, content_area, &mut list_state);
+    draw_keymap_hint(
+        frame,
+        hint_area,
+        "h/l tabs  j/k move  Enter open  a add  D delete  r reload  q quit",
+    );
 }
 
 fn plugin_items(scene: &Scene) -> Vec<(String, String)> {
@@ -911,7 +916,7 @@ fn plugin_label(plugin_id: &str) -> String {
 
 fn draw_plugin_list(frame: &mut Frame, scene: &Scene, index: usize) {
     let main_area = build_title_border(frame);
-    let (header_area, content_area) = split_header_content(main_area);
+    let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 1);
 
     let plugins = plugin_items(scene);
@@ -930,11 +935,16 @@ fn draw_plugin_list(frame: &mut Frame, scene: &Scene, index: usize) {
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, content_area, &mut list_state);
+    draw_keymap_hint(
+        frame,
+        hint_area,
+        "h/l tabs  j/k move  a add  D delete  r reload  q quit",
+    );
 }
 
 fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Option<String>) {
     let main_area = build_title_border(frame);
-    let (header_area, mut content_area) = split_header_content(main_area);
+    let (header_area, mut content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 2);
 
     if let Some(error) = error {
@@ -977,11 +987,16 @@ fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Optio
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, content_area, &mut list_state);
+    draw_keymap_hint(
+        frame,
+        hint_area,
+        "h/l tabs  j/k move  a add  D delete  r reload  q quit",
+    );
 }
 
 fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usize) {
     let main_area = build_title_border(frame);
-    let (header_area, content_area) = split_header_content(main_area);
+    let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 3);
 
     let (level_area, log_area) = split_header_content(content_area);
@@ -1001,6 +1016,11 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
     let scroll = scroll.min(lines.len().saturating_sub(1));
     let list = Paragraph::new(lines).scroll((scroll as u16, 0));
     frame.render_widget(list, log_area);
+    draw_keymap_hint(
+        frame,
+        hint_area,
+        "h/l tabs  Left/Right level  j/k scroll  q quit",
+    );
 }
 
 fn filtered_logs(scene: &Scene, level: LogLevel) -> Vec<LogEntry> {
@@ -1046,7 +1066,7 @@ fn log_color(level: LogLevel) -> Color {
 
 fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_index: usize) {
     let main_area = build_title_border(frame);
-    let (header_area, content_area) = split_header_content(main_area);
+    let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 0);
 
     let Ok(entity_name) = scene.get_entity_name(id) else {
@@ -1054,6 +1074,7 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
             .style(Color::Red)
             .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(error, content_area);
+        draw_keymap_hint(frame, hint_area, "Esc back");
         return;
     };
 
@@ -1092,6 +1113,7 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
             .style(Color::Red)
             .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(error, inner_component_block);
+        draw_keymap_hint(frame, hint_area, "Esc back");
         return;
     };
     let mut list_state = ListState::default();
@@ -1103,6 +1125,11 @@ fn draw_entity_detail(frame: &mut Frame, scene: &Scene, id: Uuid, component_inde
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, inner_component_block, &mut list_state);
+    draw_keymap_hint(
+        frame,
+        hint_area,
+        "Esc back  j/k move  Enter open  a add  r rename  D delete",
+    );
 }
 
 fn draw_component_detail(
@@ -1113,7 +1140,7 @@ fn draw_component_detail(
     field_index: usize,
 ) {
     let main_area = build_title_border(frame);
-    let (header_area, content_area) = split_header_content(main_area);
+    let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 0);
 
     let component_header_area = Rect {
@@ -1158,6 +1185,7 @@ fn draw_component_detail(
             .style(Color::Red)
             .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(error, inner_fields_block);
+        draw_keymap_hint(frame, hint_area, "Esc back");
         return;
     };
 
@@ -1201,6 +1229,7 @@ fn draw_component_detail(
         .highlight_style(Color::Blue);
 
     frame.render_stateful_widget(list, inner_fields_block, &mut list_state);
+    draw_keymap_hint(frame, hint_area, "Esc back  j/k move  Enter edit");
 }
 
 fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
@@ -1215,6 +1244,7 @@ fn draw_text_prompt(frame: &mut Frame, prompt: &TextPrompt) {
         )
         .style(Color::White);
     frame.render_widget(input, input_area);
+    draw_modal_hint(frame, input_area, "Esc abort  Enter submit", Color::Blue);
     if input_area.width > 2 && input_area.height > 2 {
         frame.set_cursor_position(Position::new(
             input_area.x + 1 + (prompt.offset as u16).min(input_area.width.saturating_sub(2)),
@@ -1233,6 +1263,7 @@ fn draw_error_screen(frame: &mut Frame, error: &ErrorScreen) {
         .alignment(ratatui::layout::Alignment::Center)
         .wrap(Wrap { trim: true });
     frame.render_widget(message, error_area);
+    draw_modal_hint(frame, error_area, "Esc/Enter close", Color::Red);
 }
 
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
@@ -1269,6 +1300,49 @@ fn split_header_content(area: Rect) -> (Rect, Rect) {
     };
 
     (tab_area, content_area)
+}
+
+fn split_header_content_footer(area: Rect) -> (Rect, Rect, Rect) {
+    let (header_area, body_area) = split_header_content(area);
+    let hint_height = body_area.height.min(1);
+    let content_area = Rect {
+        x: body_area.x,
+        y: body_area.y,
+        width: body_area.width,
+        height: body_area.height.saturating_sub(hint_height),
+    };
+    let hint_area = Rect {
+        x: body_area.x,
+        y: body_area.y.saturating_add(content_area.height),
+        width: body_area.width,
+        height: hint_height,
+    };
+
+    (header_area, content_area, hint_area)
+}
+
+fn draw_keymap_hint(frame: &mut Frame, area: Rect, hint: &str) {
+    let hint = Paragraph::new(hint)
+        .style(Color::DarkGray)
+        .alignment(ratatui::layout::Alignment::Right);
+    frame.render_widget(hint, area);
+}
+
+fn draw_modal_hint(frame: &mut Frame, area: Rect, hint: &str, color: Color) {
+    if area.width <= 2 || area.height == 0 {
+        return;
+    }
+
+    let hint_area = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(area.height.saturating_sub(1)),
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    let hint = Paragraph::new(hint)
+        .style(color)
+        .alignment(ratatui::layout::Alignment::Right);
+    frame.render_widget(hint, hint_area);
 }
 
 fn build_tab_header(frame: &mut Frame, header: Rect, index: usize) {
