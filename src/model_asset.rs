@@ -2,7 +2,7 @@ use asset_importer::{Importer, postprocess::PostProcessSteps};
 use glium::{
     IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList, winit::window::Window,
 };
-use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
+use wasserxr::{asset_type, asset_type_creator, scene::Scene, utils::paths::get_asset_path, warn};
 
 use crate::renderer::Display;
 
@@ -26,13 +26,17 @@ struct ModelAsset {
 }
 
 #[asset_type_creator(ModelAsset)]
-fn create_model_asset(scene: &mut Scene, path: &str) -> Option<ModelAsset> {
+fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
+    let Some(path) = get_asset_path(data) else {
+        warn!(scene, "Failed to find the path to the model: {}", data);
+        return None;
+    };
     let Ok(model_scene) = Importer::new()
         .read_file(path)
         .with_post_process(PostProcessSteps::TRIANGULATE | PostProcessSteps::FLIP_UVS)
         .import()
     else {
-        warn!(scene, "Failed to read the model file: {}", path);
+        warn!(scene, "Failed to read the model file: {}", data);
         return None;
     };
 

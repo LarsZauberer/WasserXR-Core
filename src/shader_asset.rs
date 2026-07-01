@@ -1,7 +1,7 @@
 use std::fs;
 
 use glium::{Program, winit::window::Window};
-use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
+use wasserxr::{asset_type, asset_type_creator, scene::Scene, utils::paths::get_asset_path, warn};
 
 use crate::renderer::Display;
 
@@ -15,18 +15,15 @@ fn shader_creator(scene: &mut Scene, path: &str) -> Option<ShaderAsset> {
     let vertex_path = path.to_owned() + ".vert";
     let fragment_path = path.to_owned() + ".frag";
 
+    let vertex_path = get_asset_path(&vertex_path)?;
+    let fragment_path = get_asset_path(&fragment_path)?;
+
     let Ok(vertex) = fs::read_to_string(&vertex_path) else {
-        warn!(
-            scene,
-            "Failed to find the vertex shader code: {}", vertex_path
-        );
+        warn!(scene, "Failed to find the vertex shader code: {}", path);
         return None;
     };
     let Ok(fragment) = fs::read_to_string(&fragment_path) else {
-        warn!(
-            scene,
-            "Failed to find the fragment shader code: {}", fragment_path
-        );
+        warn!(scene, "Failed to find the fragment shader code: {}", path);
         return None;
     };
 

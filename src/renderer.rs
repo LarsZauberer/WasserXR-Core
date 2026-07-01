@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
 use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
 use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
-use crate::{model_asset::Mesh, window::get_event_loop};
+use crate::{material_asset::MaterialData, model_asset::Mesh, window::get_event_loop};
 
 pub type Display = glium::backend::glutin::Display<glium::glutin::surface::WindowSurface>;
 
@@ -83,21 +85,21 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
     for entity in &entities[1] {
         // Get all assets and information
-        let Ok((model_path, shader_path)) =
-            scene.query::<(&String, &String)>(*entity, "Model", &["model", "shader"])
+        let Ok((model_path, material_path)) =
+            scene.query::<(&String, &String)>(*entity, "Model", &["model", "material"])
         else {
             continue;
         };
 
-        if model_path.is_empty() || shader_path.is_empty() {
+        if model_path.is_empty() || material_path.is_empty() {
             continue;
         }
 
         let model_path = model_path.clone();
-        let shader_path = shader_path.clone();
+        let material_path = material_path.clone();
 
         if scene
-            .ensure_asset_loaded("ShaderAsset", &shader_path)
+            .ensure_asset_loaded("MaterialAsset", &material_path)
             .is_err()
         {
             continue;
@@ -110,9 +112,32 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
             continue;
         }
 
+        let Ok((shader_path,)) =
+            scene.asset_query_loaded::<(&String,)>("MaterialAsset", &material_path, &["shader"])
+        else {
+            continue;
+        };
+
+        let shader_path = shader_path.clone();
+
+        if scene
+            .ensure_asset_loaded("ShaderAsset", &shader_path)
+            .is_err()
+        {
+            continue;
+        }
+
         let Ok((shader_program,)) =
             scene.asset_query_loaded::<(&Program,)>("ShaderAsset", &shader_path, &["shader"])
         else {
+            continue;
+        };
+
+        let Ok((material_data,)) = scene.asset_query_loaded::<(&HashMap<String, MaterialData>,)>(
+            "MaterialAsset",
+            &material_path,
+            &["data"],
+        ) else {
             continue;
         };
 
@@ -162,6 +187,11 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         let mut uniforms = dynamic_uniform! {};
         uniforms.add("transform", &transform);
         uniforms.add("normal_transform", &normal_transform);
+
+        // Build Uniform from material data
+        for (key, value) in material_data.iter() {
+            uniforms.add(key, value);
+        }
 
         // Final draw calls
         for mesh in meshes {

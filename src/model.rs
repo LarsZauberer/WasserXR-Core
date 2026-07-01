@@ -7,10 +7,13 @@ struct Model {
     model: String,
 
     #[mutable]
-    shader: String,
+    material: String,
 }
 
 #[component_creator(Model)]
 fn create_model(_scene: &mut Scene) -> Option<Model> {
-    Some(Model::default())
+    Some(Model {
+        model: "".to_owned(),
+        material: "./materials/base.json".to_owned(),
+    })
 }

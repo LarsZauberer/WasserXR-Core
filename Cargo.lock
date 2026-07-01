@@ -2298,6 +2298,8 @@ dependencies = [
  "libc",
  "log",
  "ratatui",
+ "serde",
+ "serde_json",
  "wasserxr",
 ]
 
