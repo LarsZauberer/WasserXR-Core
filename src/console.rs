@@ -241,13 +241,22 @@ impl PromptSubmit {
                     )),
                 }
             }
-            Self::CreatePlugin => match scene.load_plugin(text) {
-                Ok(()) => Screen::PluginList(0),
-                Err(error) => Screen::Error(ErrorScreen::new(
-                    scene_error_message(&error),
-                    Screen::PluginList(0),
-                )),
-            },
+            Self::CreatePlugin => {
+                let Some(path) = get_asset_path(&text) else {
+                    return Screen::Error(ErrorScreen::new(
+                        format!("plugin path `{text}` was not found"),
+                        Screen::PluginList(0),
+                    ));
+                };
+
+                match scene.load_plugin(path.to_string_lossy().into_owned()) {
+                    Ok(()) => Screen::PluginList(0),
+                    Err(error) => Screen::Error(ErrorScreen::new(
+                        scene_error_message(&error),
+                        Screen::PluginList(0),
+                    )),
+                }
+            }
             Self::SaveScene(on_done) => match scene.save(text) {
                 Ok(()) => *on_done,
                 Err(error) => {
