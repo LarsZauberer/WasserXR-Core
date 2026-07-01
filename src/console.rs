@@ -17,6 +17,7 @@ use wasserxr::{
         logging::{LogEntry, LogLevel},
     },
     system,
+    utils::paths::get_asset_path,
 };
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
@@ -204,6 +205,8 @@ enum PromptSubmit {
     RenameEntity(Uuid),
     CreateEntity,
     CreatePlugin,
+    SaveScene(Box<Screen>),
+    ImportScene(Box<Screen>),
     CreateSystemId,
     CreateSystemPriority {
         system_id: String,
@@ -245,6 +248,27 @@ impl PromptSubmit {
                     Screen::PluginList(0),
                 )),
             },
+            Self::SaveScene(on_done) => match scene.save(text) {
+                Ok(()) => *on_done,
+                Err(error) => {
+                    Screen::Error(ErrorScreen::new(scene_error_message(&error), *on_done))
+                }
+            },
+            Self::ImportScene(on_done) => {
+                let Some(path) = get_asset_path(&text) else {
+                    return Screen::Error(ErrorScreen::new(
+                        format!("scene path `{text}` was not found"),
+                        *on_done,
+                    ));
+                };
+
+                match scene.load(path) {
+                    Ok(()) => *on_done,
+                    Err(error) => {
+                        Screen::Error(ErrorScreen::new(scene_error_message(&error), *on_done))
+                    }
+                }
+            }
             Self::CreateSystemId => Screen::Prompt(TextPrompt::new(
                 "System Priority",
                 PromptSubmit::CreateSystemPriority { system_id: text },
@@ -453,6 +477,8 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::CreateEntity,
                 Screen::EntityList(index),
             )),
+            KeyCode::Char('s') => scene_save_prompt(Screen::EntityList(index)),
+            KeyCode::Char('i') => scene_import_prompt(Screen::EntityList(index)),
             KeyCode::Char('D') => {
                 let entities = scene.get_entities();
                 if entities.is_empty() {
@@ -678,6 +704,8 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::CreatePlugin,
                 Screen::PluginList(index),
             )),
+            KeyCode::Char('s') => scene_save_prompt(Screen::PluginList(index)),
+            KeyCode::Char('i') => scene_import_prompt(Screen::PluginList(index)),
             KeyCode::Char('D') => {
                 let plugins = plugin_items(scene);
                 if let Some((_, plugin_id)) = plugins.get(index) {
@@ -724,6 +752,8 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 PromptSubmit::CreateSystemId,
                 Screen::SystemList { index, error: None },
             )),
+            KeyCode::Char('s') => scene_save_prompt(Screen::SystemList { index, error: None }),
+            KeyCode::Char('i') => scene_import_prompt(Screen::SystemList { index, error: None }),
             KeyCode::Char('D') => {
                 let systems = scene.get_systems();
                 if let Some(system_id) = systems.get(index) {
@@ -804,6 +834,22 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             _ => Screen::Error(error),
         },
     }
+}
+
+fn scene_save_prompt(on_done: Screen) -> Screen {
+    Screen::Prompt(TextPrompt::new(
+        "Save Scene Path",
+        PromptSubmit::SaveScene(Box::new(on_done.clone())),
+        on_done,
+    ))
+}
+
+fn scene_import_prompt(on_done: Screen) -> Screen {
+    Screen::Prompt(TextPrompt::new(
+        "Import Scene Path",
+        PromptSubmit::ImportScene(Box::new(on_done.clone())),
+        on_done,
+    ))
 }
 
 fn index_add_no_loop(index: usize, len: usize) -> usize {
@@ -891,7 +937,7 @@ fn draw_entity_list(frame: &mut Frame, scene: &Scene, index: usize) {
     draw_keymap_hint(
         frame,
         hint_area,
-        "h/l tabs  j/k move  Enter open  a add  D delete  r reload  q quit",
+        "h/l tabs  j/k move  Enter open  a add  D delete  r reload  s save  i import  q quit",
     );
 }
 
@@ -938,7 +984,7 @@ fn draw_plugin_list(frame: &mut Frame, scene: &Scene, index: usize) {
     draw_keymap_hint(
         frame,
         hint_area,
-        "h/l tabs  j/k move  a add  D delete  r reload  q quit",
+        "h/l tabs  j/k move  a add  D delete  r reload  s save  i import  q quit",
     );
 }
 
@@ -990,7 +1036,7 @@ fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Optio
     draw_keymap_hint(
         frame,
         hint_area,
-        "h/l tabs  j/k move  a add  D delete  r reload  q quit",
+        "h/l tabs  j/k move  a add  D delete  r reload  s save  i import  q quit",
     );
 }
 
