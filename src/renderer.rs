@@ -14,7 +14,10 @@ pub(crate) fn get_window_display(scene: &mut Scene) -> &mut (Window, Display) {
         .is_err()
     {
         let event_loop = get_event_loop(scene);
-        let rendering_window = glium::backend::glutin::SimpleWindowBuilder::new().build(event_loop);
+        let config = glium::glutin::config::ConfigTemplateBuilder::new().with_multisampling(8);
+        let rendering_window = glium::backend::glutin::SimpleWindowBuilder::new()
+            .with_config_template_builder(config)
+            .build(event_loop);
         let _ =
             scene.add_resource::<(Window, Display)>("render_window".to_owned(), rendering_window);
     }
