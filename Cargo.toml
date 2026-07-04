@@ -2,6 +2,11 @@
 name = "wasserxr-core"
 version = "0.2.0"
 edition = "2024"
+description = "Core components and systems for the WasserXR engine"
+readme = "README.md"
+repository = "https://github.com/LarsZauberer/WasserXR-Core"
+license-file = "LICENSE.md"
+exclude = [ "result" ]
 
 [dependencies]
 asset-importer = { version = "0.8.0", features = ["static-link"] }
