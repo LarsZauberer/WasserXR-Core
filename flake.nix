@@ -1,5 +1,5 @@
 {
-  description = "A very basic flake";
+  description = "A flake for WasserXR-Core";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
@@ -43,7 +43,7 @@
             in
             rustPlatform.buildRustPackage {
               pname = "wasserxr-core";
-              version = "0.1.0";
+              version = "0.2.0";
               src = ./.;
               cargoLock.lockFile = ./Cargo.lock;
               doCheck = true;
