@@ -168,7 +168,8 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
                 // Compute View Transform
                 let translation = Vec3::from_array(cam_position);
                 let rotation = make_quat(cam_rotation);
-                let view_transform = Mat4::from_rotation_translation(rotation, translation);
+                let view_transform =
+                    Mat4::from_rotation_translation(rotation, translation).inverse();
 
                 // Compute Projection Transform
                 let projection_transform = perspective(fov, aspect_ratio, near, far);
