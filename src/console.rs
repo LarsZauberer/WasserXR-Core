@@ -74,6 +74,7 @@ enum Screen {
     LogList {
         level: LogLevel,
         scroll: usize,
+        follow: bool,
     },
 }
 
@@ -466,6 +467,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Char('h') | KeyCode::Left => Screen::LogList {
                 level: LogLevel::DEBUG,
                 scroll: 0,
+                follow: true,
             },
             KeyCode::Char('l') | KeyCode::Right => Screen::PluginList(0),
             KeyCode::Down | KeyCode::Char('j') => {
@@ -747,6 +749,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Char('l') | KeyCode::Right => Screen::LogList {
                 level: LogLevel::DEBUG,
                 scroll: 0,
+                follow: true,
             },
             KeyCode::Down | KeyCode::Char('j') => Screen::SystemList {
                 index: index_add_with_loop(index, scene.get_systems().len()),
@@ -782,10 +785,18 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             }
             _ => Screen::SystemList { index, error },
         },
-        Screen::LogList { level, scroll } => match input {
+        Screen::LogList {
+            level,
+            scroll,
+            follow,
+        } => match input {
             KeyCode::Char('q') => {
                 scene.should_exit();
-                Screen::LogList { level, scroll }
+                Screen::LogList {
+                    level,
+                    scroll,
+                    follow,
+                }
             }
             KeyCode::Char('h') => Screen::SystemList {
                 index: 0,
@@ -795,10 +806,17 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             KeyCode::Left => Screen::LogList {
                 level: log_level_sub(level),
                 scroll: 0,
+                follow,
             },
             KeyCode::Right => Screen::LogList {
                 level: log_level_add(level),
                 scroll: 0,
+                follow,
+            },
+            KeyCode::Char('f') => Screen::LogList {
+                level,
+                scroll,
+                follow: true,
             },
             KeyCode::Down | KeyCode::Char('j') => Screen::LogList {
                 level,
@@ -806,12 +824,18 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                     scroll,
                     filtered_logs(scene, level).len().saturating_sub(1),
                 ),
+                follow: false,
             },
             KeyCode::Up | KeyCode::Char('k') => Screen::LogList {
                 level,
                 scroll: index_sub_no_loop(scroll),
+                follow: false,
             },
-            _ => Screen::LogList { level, scroll },
+            _ => Screen::LogList {
+                level,
+                scroll,
+                follow,
+            },
         },
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
@@ -901,7 +925,11 @@ fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
         } => draw_component_detail(frame, scene, entity_id, &component_id, field_index),
         Screen::PluginList(index) => draw_plugin_list(frame, scene, index),
         Screen::SystemList { index, error } => draw_system_list(frame, scene, index, error),
-        Screen::LogList { level, scroll } => draw_log_list(frame, scene, level, scroll),
+        Screen::LogList {
+            level,
+            scroll,
+            follow,
+        } => draw_log_list(frame, scene, level, scroll, follow),
         Screen::Prompt(prompt) => draw_text_prompt(frame, &prompt),
         Screen::Error(error) => draw_error_screen(frame, &error),
     }
@@ -1049,13 +1077,13 @@ fn draw_system_list(frame: &mut Frame, scene: &Scene, index: usize, error: Optio
     );
 }
 
-fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usize) {
+fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usize, follow: bool) {
     let main_area = build_title_border(frame);
     let (header_area, content_area, hint_area) = split_header_content_footer(main_area);
     build_tab_header(frame, header_area, 3);
 
     let (level_area, log_area) = split_header_content(content_area);
-    build_log_tab_header(frame, level_area, log_level_index(level));
+    build_log_tab_header(frame, level_area, log_level_index(level), follow);
 
     let logs = filtered_logs(scene, level);
     let lines: Vec<Line> = logs
@@ -1068,13 +1096,17 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
         })
         .collect();
 
-    let scroll = scroll.min(lines.len().saturating_sub(1));
+    let scroll = if follow {
+        lines.len().saturating_sub(log_area.height as usize)
+    } else {
+        scroll.min(lines.len().saturating_sub(1))
+    };
     let list = Paragraph::new(lines).scroll((scroll as u16, 0));
     frame.render_widget(list, log_area);
     draw_keymap_hint(
         frame,
         hint_area,
-        "h/l tabs  Left/Right level  j/k scroll  q quit",
+        "h/l tabs  Left/Right level  j/k scroll  f follow  q quit",
     );
 }
 
@@ -1410,7 +1442,7 @@ fn build_tab_header(frame: &mut Frame, header: Rect, index: usize) {
     frame.render_widget(tab, header);
 }
 
-fn build_log_tab_header(frame: &mut Frame, header: Rect, index: usize) {
+fn build_log_tab_header(frame: &mut Frame, header: Rect, index: usize, follow: bool) {
     let tab = ratatui::widgets::Tabs::new(LOG_TABS)
         .style(Color::White)
         .highlight_style(Color::Blue)
@@ -1418,6 +1450,12 @@ fn build_log_tab_header(frame: &mut Frame, header: Rect, index: usize) {
         .divider(symbols::DOT)
         .padding(" ", " ");
     frame.render_widget(tab, header);
+
+    let status = if follow { "FOLLOW" } else { "PAUSED" };
+    let status = Paragraph::new(status)
+        .style(if follow { Color::Green } else { Color::Yellow })
+        .alignment(ratatui::layout::Alignment::Right);
+    frame.render_widget(status, header);
 }
 
 fn left_right_line<'a>(
