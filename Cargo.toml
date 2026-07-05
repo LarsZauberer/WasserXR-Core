@@ -1,0 +1,24 @@
+[package]
+name = "wasserxr-core"
+version = "0.2.0"
+edition = "2024"
+description = "Core components and systems for the WasserXR engine"
+readme = "README.md"
+repository = "https://github.com/LarsZauberer/WasserXR-Core"
+license-file = "LICENSE.md"
+exclude = [ "result" ]
+
+[dependencies]
+asset-importer = { version = "0.8.0", features = ["static-link"] }
+crossterm = "0.28.1"
+glam = "0.33.2"
+glium = "0.36.0"
+libc = "0.2.186"
+log = "0.4.32"
+ratatui = "0.29.0"
+serde = "1.0.228"
+serde_json = "1.0.150"
+wasserxr = { version = "0.2.3" }
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]

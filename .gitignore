@@ -9,3 +9,8 @@ Testing/*
 .gdb_history
 
 AGENTS.md
+
+
+# Added by cargo
+
+/target
