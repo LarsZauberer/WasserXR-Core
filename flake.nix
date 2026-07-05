@@ -39,6 +39,7 @@
           buildInputs = [
             nightlyRust
             pkgs.cargo-llvm-cov
+            pkgs.cargo-release
 
             pkgs.cmake
             pkgs.zlib
