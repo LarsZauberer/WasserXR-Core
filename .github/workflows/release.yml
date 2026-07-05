@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  workflow_dispatch:
+      inputs:
+        version:
+          description: "New version, e.g. 0.3.0, patch, minor, major"
+          required: true
+          type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build Libraries
+        run: |
+          nix develop -c cargo build --release
+
+      - name: Release
+        run: |
+          nix develop -c cargo release --workspace --execute --no-confirm ${{ inputs.version }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES }}
+
+      - name: Find release tag
+        id: release_tag
+        run: |
+          tag="$(git tag --points-at HEAD --list 'v*' | sort -V | tail -n1)"
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          files: |
+            target/release/libwasserxr_core.a
+            target/release/libwasserxr_core.so
