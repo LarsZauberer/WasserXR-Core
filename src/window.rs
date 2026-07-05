@@ -73,7 +73,7 @@ fn window_close(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     };
 
     if events.contains(&WindowEvent::CloseRequested) {
-        // TODO: Clean Exiting
+        scene.should_exit();
     }
 }
 
