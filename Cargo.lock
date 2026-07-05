@@ -2291,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "wasserxr-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "asset-importer",
  "crossterm",
