@@ -21,4 +21,4 @@ jobs:
           nix_path: nixpkgs=channel:nixpkgs-unstable
 
       - name: Run nix flake check
-        run: nix flake check --print-build-logs
+        run: nix develop -c cargo test
