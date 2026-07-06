@@ -11,3 +11,4 @@ pub(crate) mod shader_asset;
 pub(crate) mod transform;
 pub(crate) mod utils;
 pub(crate) mod window;
+pub mod xr;
