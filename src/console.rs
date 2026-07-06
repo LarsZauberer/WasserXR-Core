@@ -42,15 +42,11 @@ impl ConsoleTerminal {
     {
         let _ = self.terminal.draw(render_callback);
     }
-
-    fn recreate(&mut self) {
-        ratatui::restore();
-    }
 }
 
 impl Drop for ConsoleTerminal {
     fn drop(&mut self) {
-        self.recreate();
+        ratatui::restore();
     }
 }
 
@@ -185,8 +181,7 @@ fn component_error_reason(error: &ComponentError) -> String {
         ComponentError::FieldParsing => "the requested field list is invalid".to_owned(),
         ComponentError::FieldValueParsing => {
             "the entered value is not valid for this field type".to_owned()
-        }
-        _ => "Unknown Error".to_string(),
+        } // _ => "Unknown Error".to_string(),
     }
 }
 
@@ -818,19 +813,32 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
                 scroll,
                 follow: true,
             },
-            KeyCode::Down | KeyCode::Char('j') => Screen::LogList {
-                level,
-                scroll: index_add_no_loop(
-                    scroll,
-                    filtered_logs(scene, level).len().saturating_sub(1),
-                ),
-                follow: false,
-            },
-            KeyCode::Up | KeyCode::Char('k') => Screen::LogList {
-                level,
-                scroll: index_sub_no_loop(scroll),
-                follow: false,
-            },
+            KeyCode::Down | KeyCode::Char('j') => {
+                let log_count = filtered_logs(scene, level).len();
+                let scroll = if follow {
+                    log_count.saturating_sub(1)
+                } else {
+                    scroll.min(log_count.saturating_sub(1))
+                };
+                Screen::LogList {
+                    level,
+                    scroll: index_add_no_loop(scroll, log_count.saturating_sub(1)),
+                    follow: false,
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let log_count = filtered_logs(scene, level).len();
+                let scroll = if follow {
+                    log_count.saturating_sub(1)
+                } else {
+                    scroll.min(log_count.saturating_sub(1))
+                };
+                Screen::LogList {
+                    level,
+                    scroll: index_sub_no_loop(scroll),
+                    follow: false,
+                }
+            }
             _ => Screen::LogList {
                 level,
                 scroll,
@@ -1097,11 +1105,14 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
         .collect();
 
     let scroll = if follow {
-        lines.len().saturating_sub(log_area.height as usize)
+        lines.len().saturating_sub(1)
     } else {
         scroll.min(lines.len().saturating_sub(1))
     };
-    let list = Paragraph::new(lines).scroll((scroll as u16, 0));
+    let visible_start = scroll
+        .saturating_add(1)
+        .saturating_sub(log_area.height as usize);
+    let list = Paragraph::new(lines).scroll((visible_start as u16, 0));
     frame.render_widget(list, log_area);
     draw_keymap_hint(
         frame,
@@ -1452,10 +1463,19 @@ fn build_log_tab_header(frame: &mut Frame, header: Rect, index: usize, follow: b
     frame.render_widget(tab, header);
 
     let status = if follow { "FOLLOW" } else { "PAUSED" };
+    let status_width = header.width.min(status.len() as u16);
+    let status_area = Rect {
+        x: header
+            .x
+            .saturating_add(header.width.saturating_sub(status_width)),
+        y: header.y,
+        width: status_width,
+        height: header.height,
+    };
     let status = Paragraph::new(status)
         .style(if follow { Color::Green } else { Color::Yellow })
         .alignment(ratatui::layout::Alignment::Right);
-    frame.render_widget(status, header);
+    frame.render_widget(status, status_area);
 }
 
 fn left_right_line<'a>(
