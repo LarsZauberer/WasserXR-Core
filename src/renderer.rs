@@ -1,30 +1,169 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroU32};
 
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
-use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
+use glium::{
+    DrawParameters, Program, Surface, dynamic_uniform,
+    glutin::{
+        self,
+        config::{AsRawConfig, ConfigTemplateBuilder, RawConfig},
+        context::{AsRawContext, ContextAttributesBuilder, RawContext},
+        display::{AsRawDisplay, GetGlDisplay, RawDisplay},
+        platform::x11::X11GlConfigExt,
+        prelude::*,
+        surface::{AsRawSurface, RawSurface, SurfaceAttributesBuilder, WindowSurface},
+    },
+    winit::{dpi::PhysicalSize, window::Window},
+};
+use glutin_winit::DisplayBuilder;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle};
 use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
 use crate::{material_asset::MaterialData, model_asset::Mesh, window::get_event_loop};
 
 pub type Display = glium::backend::glutin::Display<glium::glutin::surface::WindowSurface>;
 
+const OPENGL_CONTEXT_RESOURCE: &str = "opengl_context";
+const WINDOW_DISPLAY_RESOURCE: &str = "opengl_window_display";
+
+pub(crate) enum OpenGLContext {
+    Xlib {
+        x_display: *mut openxr::sys::platform::Display,
+        visualid: u32,
+        glx_fb_config: openxr::sys::platform::GLXFBConfig,
+        glx_drawable: openxr::sys::platform::GLXDrawable,
+        glx_context: openxr::sys::platform::GLXContext,
+    },
+    Wayland {
+        display: *mut openxr::sys::platform::wl_display,
+    },
+}
+
+impl OpenGLContext {
+    pub(crate) fn session_create_info(&self) -> openxr::opengl::SessionCreateInfo {
+        match *self {
+            Self::Xlib {
+                x_display,
+                visualid,
+                glx_fb_config,
+                glx_drawable,
+                glx_context,
+            } => openxr::opengl::SessionCreateInfo::Xlib {
+                x_display,
+                visualid,
+                glx_fb_config,
+                glx_drawable,
+                glx_context,
+            },
+            Self::Wayland { display } => openxr::opengl::SessionCreateInfo::Wayland { display },
+        }
+    }
+
+    fn from_glutin(
+        window: &Window,
+        config: &glutin::config::Config,
+        context: &glutin::context::PossiblyCurrentContext,
+        surface: &glutin::surface::Surface<WindowSurface>,
+    ) -> Self {
+        if let (
+            RawDisplay::Glx(x_display),
+            RawConfig::Glx(glx_fb_config),
+            RawContext::Glx(glx_context),
+            RawSurface::Glx(glx_drawable),
+        ) = (
+            config.display().raw_display(),
+            config.raw_config(),
+            context.raw_context(),
+            surface.raw_surface(),
+        ) {
+            return Self::Xlib {
+                x_display: x_display.cast_mut().cast(),
+                visualid: config
+                    .x11_visual()
+                    .expect("Failed to get X11 visual")
+                    .visual_id() as u32,
+                glx_fb_config: glx_fb_config.cast_mut(),
+                glx_drawable,
+                glx_context: glx_context.cast_mut(),
+            };
+        }
+
+        if let RawDisplayHandle::Wayland(handle) = window
+            .display_handle()
+            .expect("Failed to get raw display handle")
+            .as_raw()
+        {
+            return Self::Wayland {
+                display: handle.display.as_ptr().cast(),
+            };
+        }
+
+        panic!("Unsupported OpenGL context for OpenXR");
+    }
+}
+
 pub(crate) fn get_window_display(scene: &mut Scene) -> &mut (Window, Display) {
     if scene
         .get_resource::<(Window, Display)>("render_window")
         .is_err()
     {
-        let event_loop = get_event_loop(scene);
-        let config = glium::glutin::config::ConfigTemplateBuilder::new().with_multisampling(8);
-        let rendering_window = glium::backend::glutin::SimpleWindowBuilder::new()
-            .with_config_template_builder(config)
-            .build(event_loop);
-        let _ =
-            scene.add_resource::<(Window, Display)>("render_window".to_owned(), rendering_window);
+        let (rendering_window, opengl_context) = create_render_window(scene);
+        let _ = scene.add_resource(WINDOW_DISPLAY_RESOURCE.to_owned(), rendering_window);
+        let _ = scene.add_resource(OPENGL_CONTEXT_RESOURCE.to_owned(), opengl_context);
     }
 
     scene
-        .get_mut_resource::<(Window, Display)>("render_window")
+        .get_mut_resource::<(Window, Display)>(WINDOW_DISPLAY_RESOURCE)
         .expect("Failed to get the Rendering Window")
+}
+
+fn create_render_window(scene: &mut Scene) -> ((Window, Display), OpenGLContext) {
+    let event_loop = get_event_loop(scene);
+    let attributes = Window::default_attributes()
+        // TODO: Make the title parameterizable
+        .with_title("WasserXR")
+        .with_inner_size(PhysicalSize::new(800, 480));
+    let config_template = ConfigTemplateBuilder::new().with_multisampling(8);
+    let (window, config) = DisplayBuilder::new()
+        .with_window_attributes(Some(attributes))
+        .build(event_loop, config_template, |mut configs| {
+            configs.next().expect("Failed to find OpenGL config")
+        })
+        .expect("Failed to create OpenGL window");
+    let window = window.expect("Failed to create Window");
+    let (width, height): (u32, u32) = window.inner_size().into();
+    let surface_attributes = SurfaceAttributesBuilder::<WindowSurface>::new().build(
+        window
+            .window_handle()
+            .expect("Failed to get raw window handle")
+            .into(),
+        NonZeroU32::new(width).unwrap_or(NonZeroU32::new(1).unwrap()),
+        NonZeroU32::new(height).unwrap_or(NonZeroU32::new(1).unwrap()),
+    );
+    let surface = unsafe {
+        config
+            .display()
+            .create_window_surface(&config, &surface_attributes)
+            .expect("Failed to create OpenGL surface")
+    };
+    let context_attributes = ContextAttributesBuilder::new().build(Some(
+        window
+            .window_handle()
+            .expect("Failed to get raw window handle")
+            .into(),
+    ));
+    let context = unsafe {
+        config
+            .display()
+            .create_context(&config, &context_attributes)
+            .expect("Failed to create OpenGL context")
+    }
+    .make_current(&surface)
+    .expect("Failed to make OpenGL context current");
+    let opengl_context = OpenGLContext::from_glutin(&window, &config, &context, &surface);
+    let display =
+        Display::from_context_surface(context, surface).expect("Failed to create Display");
+
+    ((window, display), opengl_context)
 }
 
 #[attacher(renderer)]
