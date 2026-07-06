@@ -23,6 +23,7 @@ fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         scene,
         &mut colliders,
         &entities[0],
+        "BoxCollider",
         "./models/cube.obj",
         "./materials/debug.json",
     );
@@ -31,6 +32,7 @@ fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         scene,
         &mut rigids,
         &entities[1],
+        "RigidBox",
         "./models/cube.obj",
         "./materials/debug.json",
     );
@@ -63,6 +65,7 @@ fn sync_debug_entities(
     scene: &mut Scene,
     map: &mut HashMap<Uuid, Uuid>,
     entities: &[Uuid],
+    component: &str,
     model: &str,
     material: &str,
 ) {
@@ -99,9 +102,6 @@ fn sync_debug_entities(
         ensure_component_exists(scene, *debug_entity, "Model");
         ensure_component_exists(scene, *debug_entity, "Transform");
 
-        // TODO: The scale adjustment needs to be fixed when it is specified by the
-        // rigidbody/collider
-
         {
             let Ok((entity_model, entity_material)) = scene
                 .query_mut::<(&mut String, &mut String)>(
@@ -118,17 +118,23 @@ fn sync_debug_entities(
         }
 
         {
-            let Ok((position, rotation, scale)) = scene.query::<(&[f32; 3], &[f32; 3], &[f32; 3])>(
+            let Ok((position, rotation)) = scene.query::<(&[f32; 3], &[f32; 3])>(
                 *entity,
                 "Transform",
-                &["position", "rotation", "scale"],
+                &["position", "rotation"],
             ) else {
                 continue;
             };
 
             let position = *position;
             let rotation = *rotation;
-            let scale = *scale;
+
+            // The box size lives on the collider/rigidbox component. cube.obj spans
+            // 2 units, so halve the scale to match the collider's world-space size.
+            let Ok((scale,)) = scene.query::<(&[f32; 3],)>(*entity, component, &["scale"]) else {
+                continue;
+            };
+            let scale = [scale[0] * 0.5, scale[1] * 0.5, scale[2] * 0.5];
 
             let Ok((debug_position, debug_rotation, debug_scale)) =
                 scene.query_mut::<(&mut [f32; 3], &mut [f32; 3], &mut [f32; 3])>(
