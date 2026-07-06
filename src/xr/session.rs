@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use wasserxr::scene::Scene;
 
-use crate::renderer::{OpenGLContext, get_window_display};
+use crate::opengl::{OPENGL_CONTEXT_RESOURCE, OpenGLContext, ensure_opengl_window};
 use crate::xr::instance::{XRInstance, ensure_xrinstance};
 
 pub struct XRSession(openxr::Session<openxr::OpenGL>);
@@ -31,19 +31,23 @@ impl XRSession {
 
 pub fn ensure_xrsession(scene: &mut Scene) {
     ensure_xrinstance(scene);
-    let _ = get_window_display(scene);
+    ensure_opengl_window(scene);
 
     if scene
         .get_resource::<RefCell<XRSession>>("xrsession")
         .is_err()
     {
-        let instance = scene
-            .get_resource::<RefCell<XRInstance>>("xrinstance")
-            .expect("Failed to get OpenXR instance");
-        let opengl_context = scene
-            .get_resource::<OpenGLContext>("render_opengl_context")
-            .expect("Failed to get OpenGL context");
-        let session = XRSession::new(&instance.borrow(), opengl_context);
+        let session = {
+            let instance = scene
+                .get_resource::<RefCell<XRInstance>>("xrinstance")
+                .expect("Failed to get OpenXR instance");
+            let opengl_context = scene
+                .get_resource::<RefCell<OpenGLContext>>(OPENGL_CONTEXT_RESOURCE)
+                .expect("Failed to get OpenGL context");
+            let instance = instance.borrow();
+            let opengl_context = opengl_context.borrow();
+            XRSession::new(&instance, &opengl_context)
+        };
         let _ = scene.add_resource("xrsession".to_owned(), RefCell::new(session));
     }
 }

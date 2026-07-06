@@ -1,10 +1,12 @@
+use std::cell::RefCell;
+
 use asset_importer::{Importer, postprocess::PostProcessSteps};
 use glium::{
     IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList, winit::window::Window,
 };
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, utils::paths::get_asset_path, warn};
 
-use crate::renderer::Display;
+use crate::opengl::{Display, WINDOW_DISPLAY_RESOURCE};
 
 #[derive(Copy, Clone)]
 pub struct Vertex {
@@ -41,9 +43,13 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
     };
 
     // Get the OpenGL Context
-    let Ok((_, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
+    let Ok(window_display) =
+        scene.get_resource::<RefCell<(Window, Display)>>(WINDOW_DISPLAY_RESOURCE)
+    else {
         return None;
     };
+    let window_display = window_display.borrow();
+    let (_, display) = &*window_display;
 
     let meshes: Vec<Mesh> = model_scene
         .meshes()
