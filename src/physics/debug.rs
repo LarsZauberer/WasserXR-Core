@@ -19,6 +19,11 @@ fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     };
 
+    // A hot-reload serializes the scene together with the debug entities we spawned and
+    // resurrects them while our tracking maps come back empty. Drop any untracked
+    // `_physics_debug` leftovers so we don't duplicate them.
+    remove_orphan_debug_entities(scene, &colliders, &rigids);
+
     sync_debug_entities(
         scene,
         &mut colliders,
@@ -149,6 +154,27 @@ fn sync_debug_entities(
             *debug_position = position;
             *debug_rotation = rotation;
             *debug_scale = scale;
+        }
+    }
+}
+
+fn remove_orphan_debug_entities(
+    scene: &mut Scene,
+    colliders: &HashMap<Uuid, Uuid>,
+    rigids: &HashMap<Uuid, Uuid>,
+) {
+    for entity in scene.get_entities() {
+        let tracked = colliders
+            .values()
+            .chain(rigids.values())
+            .any(|debug| *debug == entity);
+
+        if !tracked
+            && scene
+                .get_entity_name(entity)
+                .is_ok_and(|name| name.ends_with("_physics_debug"))
+        {
+            let _ = scene.remove_entity(entity);
         }
     }
 }
