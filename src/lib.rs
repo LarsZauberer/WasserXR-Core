@@ -4,6 +4,7 @@ pub mod errors;
 pub(crate) mod material_asset;
 pub(crate) mod model;
 pub(crate) mod model_asset;
+pub(crate) mod opengl;
 pub(crate) mod opengl_model_asset;
 pub(crate) mod physics;
 pub(crate) mod renderer;
