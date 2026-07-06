@@ -129,12 +129,12 @@ fn sync_debug_entities(
             let position = *position;
             let rotation = *rotation;
 
-            // The box size lives on the collider/rigidbox component. cube.obj spans
-            // 2 units, so halve the scale to match the collider's world-space size.
+            // The box size lives on the collider/rigidbox component and is used 1:1 with
+            // the Transform scale (cube.obj is 2 units, matching the collider's full size).
             let Ok((scale,)) = scene.query::<(&[f32; 3],)>(*entity, component, &["scale"]) else {
                 continue;
             };
-            let scale = [scale[0] * 0.5, scale[1] * 0.5, scale[2] * 0.5];
+            let scale = *scale;
 
             let Ok((debug_position, debug_rotation, debug_scale)) =
                 scene.query_mut::<(&mut [f32; 3], &mut [f32; 3], &mut [f32; 3])>(

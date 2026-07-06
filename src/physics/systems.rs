@@ -220,6 +220,8 @@ fn cuboid_shape(scale: [f32; 3]) -> SharedShape {
     )
 }
 
+// cube.obj is 2 units wide, so a component scale maps 1:1 to the rapier cuboid
+// half-extent: full collider size = 2 * scale = the rendered size at that Transform scale.
 fn half_extent(scale: f32) -> f32 {
-    scale.abs().max(0.001) * 0.5
+    scale.abs().max(0.001)
 }
