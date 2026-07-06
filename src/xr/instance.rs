@@ -10,7 +10,7 @@ impl XRInstance {
         let engine_version = engine_version();
         let entry = unsafe { openxr::Entry::load().expect("Failed to load OpenXR loader") };
         let mut extensions = openxr::ExtensionSet::default();
-        extensions.mnd_headless = true;
+        extensions.khr_opengl_enable = true;
         let instance = entry
             .create_instance(
                 &openxr::ApplicationInfo {
