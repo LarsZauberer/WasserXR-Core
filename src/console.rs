@@ -358,15 +358,18 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
         state = transition(scene, key, state);
     }
 
-    set_resource(scene, STATE_RESOURCE, state.clone());
-
     let Ok(terminal) = scene.get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE) else {
+        set_resource(scene, STATE_RESOURCE, state);
         return;
     };
 
+    let mut state_to_store = state.clone();
     terminal.borrow_mut().draw(|frame| {
-        draw(frame, scene, state.clone());
+        state_to_store = normalize_state_for_frame(scene, state.clone(), frame.area());
+        draw(frame, scene, state_to_store.clone());
     });
+
+    set_resource(scene, STATE_RESOURCE, state_to_store);
 }
 
 #[attacher(console)]
@@ -815,11 +818,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             },
             KeyCode::Down | KeyCode::Char('j') => {
                 let log_count = filtered_logs(scene, level).len();
-                let scroll = if follow {
-                    log_count.saturating_sub(1)
-                } else {
-                    scroll.min(log_count.saturating_sub(1))
-                };
+                let scroll = scroll.min(log_count.saturating_sub(1));
                 Screen::LogList {
                     level,
                     scroll: index_add_no_loop(scroll, log_count.saturating_sub(1)),
@@ -828,11 +827,7 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let log_count = filtered_logs(scene, level).len();
-                let scroll = if follow {
-                    log_count.saturating_sub(1)
-                } else {
-                    scroll.min(log_count.saturating_sub(1))
-                };
+                let scroll = scroll.min(log_count.saturating_sub(1));
                 Screen::LogList {
                     level,
                     scroll: index_sub_no_loop(scroll),
@@ -913,6 +908,47 @@ fn index_sub_with_loop(index: usize, len: usize) -> usize {
     } else {
         index - 1
     }
+}
+
+fn normalize_state_for_frame(scene: &Scene, state: Screen, area: Rect) -> Screen {
+    match state {
+        Screen::LogList {
+            level,
+            scroll,
+            follow,
+        } if can_draw_console(area) => {
+            let visible_lines = log_area_height(area);
+            let log_count = filtered_logs(scene, level).len();
+            let scroll = if follow {
+                max_log_scroll(log_count, visible_lines)
+            } else {
+                clamp_log_scroll(scroll, log_count, visible_lines)
+            };
+
+            Screen::LogList {
+                level,
+                scroll,
+                follow,
+            }
+        }
+        state => state,
+    }
+}
+
+fn log_area_height(area: Rect) -> u16 {
+    let main_area = Block::bordered().inner(area);
+    let (_, content_area, _) = split_header_content_footer(main_area);
+    let (_, log_area) = split_header_content(content_area);
+
+    log_area.height
+}
+
+fn max_log_scroll(log_count: usize, visible_lines: u16) -> usize {
+    log_count.saturating_sub(visible_lines as usize)
+}
+
+fn clamp_log_scroll(scroll: usize, log_count: usize, visible_lines: u16) -> usize {
+    scroll.min(max_log_scroll(log_count, visible_lines))
 }
 
 fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
@@ -1104,14 +1140,11 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
         })
         .collect();
 
-    let scroll = if follow {
-        lines.len().saturating_sub(1)
+    let visible_start = if follow {
+        max_log_scroll(lines.len(), log_area.height)
     } else {
-        scroll.min(lines.len().saturating_sub(1))
+        clamp_log_scroll(scroll, lines.len(), log_area.height)
     };
-    let visible_start = scroll
-        .saturating_add(1)
-        .saturating_sub(log_area.height as usize);
     let list = Paragraph::new(lines).scroll((visible_start as u16, 0));
     frame.render_widget(list, log_area);
     draw_keymap_hint(
