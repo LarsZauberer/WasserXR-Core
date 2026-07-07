@@ -18,7 +18,7 @@ use wasserxr::{Uuid, scene::Scene, system};
 
 use crate::{
     renderer::transform_matrix,
-    xr::controller::XRControllerType,
+    xr::controller_components::XRControllerType,
     xr::math::pose_matrix,
     xr::renderer::{XR_RENDERER_RESOURCE, XRRenderer},
     xr::session::{XRSession, ensure_xrsession},
@@ -54,7 +54,10 @@ pub(crate) fn ensure_xr_controllers(scene: &mut Scene) {
         let session = session.borrow();
         create_xr_controllers(&session)
     };
-    let _ = scene.add_resource(XR_CONTROLLERS_RESOURCE.to_owned(), RefCell::new(controllers));
+    let _ = scene.add_resource(
+        XR_CONTROLLERS_RESOURCE.to_owned(),
+        RefCell::new(controllers),
+    );
 }
 
 fn create_xr_controllers(session: &XRSession) -> XRControllers {
