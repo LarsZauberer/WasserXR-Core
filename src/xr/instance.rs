@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use wasserxr::scene::Scene;
+use wasserxr::{info, scene::Scene};
 
 pub struct XRInstance(openxr::Instance);
 
@@ -93,6 +93,22 @@ pub fn ensure_xrinstance(scene: &mut Scene) {
         .get_resource::<RefCell<XRInstance>>("xrinstance")
         .is_err()
     {
-        let _ = scene.add_resource("xrinstance".to_owned(), RefCell::new(XRInstance::new()));
+        let instance = XRInstance::new();
+        let runtime = instance
+            .instance()
+            .properties()
+            .expect("Failed to get OpenXR instance properties");
+        let core_version = core_version();
+        let engine_version = engine_version();
+        info!(
+            scene,
+            "OpenXR instance created\n\tapplication_name: WasserXR\n\tapplication_version: {}\n\tengine_name: WasserXR\n\tengine_version: {}\n\tapi_version: {}\n\truntime_name: {}\n\truntime_version: {}",
+            version_u32(core_version),
+            version_u32(engine_version),
+            version_openxr(engine_version),
+            runtime.runtime_name,
+            runtime.runtime_version
+        );
+        let _ = scene.add_resource("xrinstance".to_owned(), RefCell::new(instance));
     }
 }
