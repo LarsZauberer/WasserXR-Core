@@ -843,8 +843,8 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
             KeyCode::Backspace => {
-                prompt.offset = index_sub_no_loop(prompt.offset);
-                if prompt.offset < prompt.text.len() {
+                if prompt.offset > 0 {
+                    prompt.offset = index_sub_no_loop(prompt.offset);
                     prompt.text.remove(prompt.offset);
                 }
                 Screen::Prompt(prompt)
