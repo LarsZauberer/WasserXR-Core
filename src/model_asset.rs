@@ -1,28 +1,16 @@
 use asset_importer::{Importer, postprocess::PostProcessSteps};
-use glium::{
-    IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList, winit::window::Window,
-};
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, utils::paths::get_asset_path, warn};
 
-use crate::renderer::Display;
-
-#[derive(Copy, Clone)]
-pub struct Vertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    tex_coord: [f32; 2],
-}
-
-glium::implement_vertex!(Vertex, position, normal, tex_coord);
-
-pub struct Mesh {
-    pub vertices: VertexBuffer<Vertex>,
-    pub indices: IndexBuffer<u32>,
+pub struct RawMesh {
+    pub vertices: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub tex_coords: Vec<[f32; 2]>,
+    pub indices: Vec<u32>,
 }
 
 #[asset_type]
 struct ModelAsset {
-    meshes: Vec<Mesh>,
+    raw_meshes: Vec<RawMesh>,
 }
 
 #[asset_type_creator(ModelAsset)]
@@ -40,12 +28,7 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
         return None;
     };
 
-    // Get the OpenGL Context
-    let Ok((_, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
-        return None;
-    };
-
-    let meshes: Vec<Mesh> = model_scene
+    let raw_meshes = model_scene
         .meshes()
         .map(|mesh| {
             let vertices = mesh
@@ -56,34 +39,22 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
                 .normals_iter()
                 .map(|normals| [normals.x, normals.y, normals.z])
                 .collect::<Vec<[f32; 3]>>();
-            let tex_coords = mesh.texture_coords2(0).unwrap_or_default();
-            let vertices = vertices
-                .into_iter()
-                .enumerate()
-                .map(|(index, position)| Vertex {
-                    position,
-                    normal: normals.get(index).copied().unwrap_or([0.0, 0.0, 0.0]),
-                    tex_coord: tex_coords
-                        .get(index)
-                        .map(|tex_coord| [tex_coord.x, tex_coord.y])
-                        .unwrap_or([0.0, 0.0]),
-                })
-                .collect::<Vec<Vertex>>();
+            let tex_coords = mesh
+                .texture_coords2(0)
+                .unwrap_or_default()
+                .iter()
+                .map(|tex_coord| [tex_coord.x, tex_coord.y])
+                .collect::<Vec<[f32; 2]>>();
             let indices = mesh.triangles().into_iter().flatten().collect::<Vec<u32>>();
 
-            let vertices_buffer =
-                VertexBuffer::new(display, &vertices).expect("Failed to create vertices buffer");
-            let indices_buffer = IndexBuffer::new(display, TrianglesList, &indices)
-                .expect("Failed to create index buffer");
-
-            Mesh {
-                vertices: vertices_buffer,
-                indices: indices_buffer,
+            RawMesh {
+                vertices,
+                normals,
+                tex_coords,
+                indices,
             }
         })
         .collect();
 
-    let model = ModelAsset { meshes };
-
-    Some(model)
+    Some(ModelAsset { raw_meshes })
 }
