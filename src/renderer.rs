@@ -51,11 +51,15 @@ pub(crate) fn get_camera(scene: &Scene, camera_entity: Uuid) -> Option<Camera> {
     Some(camera)
 }
 
+/// Builds the world transform matrix of a position + rotation (XYZ euler
+/// angles in degrees, the Transform component convention).
+pub(crate) fn transform_matrix(position: [f32; 3], rotation: [f32; 3]) -> Mat4 {
+    Mat4::from_rotation_translation(make_quat(rotation), Vec3::from_array(position))
+}
+
 /// Builds the view matrix (world space -> camera space) from the camera transform.
 pub(crate) fn view_matrix(camera: &Camera) -> Mat4 {
-    let translation = Vec3::from_array(camera.position);
-    let rotation = make_quat(camera.rotation);
-    Mat4::from_rotation_translation(rotation, translation).inverse()
+    transform_matrix(camera.position, camera.rotation).inverse()
 }
 
 /// Everything needed to draw one Model entity, resolved once per frame.

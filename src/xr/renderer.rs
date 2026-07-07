@@ -17,7 +17,7 @@ use glium::{
     texture::{DepthFormat, Dimensions, MipmapsOption, SrgbFormat, SrgbTexture2d},
     winit::window::Window,
 };
-use wasserxr::{Uuid, attacher, scene::Scene, system};
+use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
 use crate::{
     opengl::{Display, WINDOW_DISPLAY_RESOURCE},
@@ -50,10 +50,39 @@ pub(crate) struct XRRenderer {
     /// VIEW reference space: it follows the head, so rendering with an
     /// identity pose keeps the image fixed in front of the eyes.
     space: openxr::Space,
+    /// LOCAL reference space: the world-anchored play-space origin, fixed
+    /// where the headset was when the session started. Headset poses are
+    /// measured relative to this space.
+    local_space: openxr::Space,
     /// Left eye, then right eye.
     eyes: Vec<EyeTarget>,
     /// True while the runtime allows rendering (between READY and STOPPING).
     session_running: bool,
+    /// Display time of the last rendered frame. Poses can only be queried
+    /// for a point in time, and this is the most recent one we know.
+    predicted_display_time: openxr::Time,
+}
+
+impl XRRenderer {
+    /// Where is the headset right now, relative to the play-space origin?
+    /// None while the session isn't rendering yet or tracking is lost.
+    pub(crate) fn locate_head(&self) -> Option<openxr::Posef> {
+        if !self.session_running || self.predicted_display_time.as_nanos() == 0 {
+            return None;
+        }
+        // `space` is a VIEW space (it follows the head), so locating it
+        // inside the world-anchored LOCAL space yields the headset pose.
+        let location = self
+            .space
+            .locate(&self.local_space, self.predicted_display_time)
+            .ok()?;
+        let valid = openxr::SpaceLocationFlags::ORIENTATION_VALID
+            | openxr::SpaceLocationFlags::POSITION_VALID;
+        if !location.location_flags.contains(valid) {
+            return None;
+        }
+        Some(location.pose)
+    }
 }
 
 pub(crate) fn ensure_xr_renderer(scene: &mut Scene) {
@@ -151,11 +180,17 @@ fn create_xr_renderer(session: &XRSession, display: &Display) -> XRRenderer {
         .session()
         .create_reference_space(openxr::ReferenceSpaceType::VIEW, openxr::Posef::IDENTITY)
         .expect("Failed to create reference space");
+    let local_space = session
+        .session()
+        .create_reference_space(openxr::ReferenceSpaceType::LOCAL, openxr::Posef::IDENTITY)
+        .expect("Failed to create local reference space");
 
     XRRenderer {
         space,
+        local_space,
         eyes,
         session_running: false,
+        predicted_display_time: openxr::Time::from_nanos(0),
     }
 }
 
@@ -209,10 +244,17 @@ fn xr_renderer_attach(scene: &mut Scene) {
     ensure_xr_renderer(scene);
 }
 
-#[system(entities=[["Camera"], ["Model"]])]
+#[system(entities=[["Camera"], ["Model"], ["XROrigin"]])]
 fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     // Check if there is a camera
     if entities[0].is_empty() {
+        return;
+    }
+
+    // The XROrigin entity anchors the play space in the game world; without
+    // it we don't know where the player is supposed to stand.
+    if entities[2].is_empty() {
+        warn!(scene, "XR rendering needs an entity with an XROrigin component");
         return;
     }
 
@@ -243,6 +285,8 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         space,
         eyes,
         session_running,
+        predicted_display_time,
+        ..
     } = &mut *renderer;
 
     // The runtime drives the session through states; react to them first.
@@ -256,6 +300,9 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         .frame_waiter()
         .wait()
         .expect("Failed to wait for OpenXR frame");
+    // Remember the display time so other systems (like the camera sync) can
+    // ask the runtime for poses at this point in time.
+    *predicted_display_time = frame_state.predicted_display_time;
     session
         .frame_stream()
         .begin()
