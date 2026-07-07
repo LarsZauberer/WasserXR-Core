@@ -62,14 +62,18 @@ pub(crate) struct XRRenderer {
 }
 
 impl XRRenderer {
-    /// Where is the headset right now, relative to the play-space origin?
+    /// True while frames are being rendered; poses can only be queried then.
+    pub(crate) fn is_running(&self) -> bool {
+        self.session_running && self.predicted_display_time.as_nanos() != 0
+    }
+
+    /// Where is `space` right now, relative to the play-space origin?
     /// None while the session isn't rendering yet or tracking is lost.
-    pub(crate) fn locate_head(&self) -> Option<openxr::Posef> {
-        if !self.session_running || self.predicted_display_time.as_nanos() == 0 {
+    pub(crate) fn locate(&self, space: &openxr::Space) -> Option<openxr::Posef> {
+        if !self.is_running() {
             return None;
         }
-        let location = self
-            .view_space
+        let location = space
             .locate(&self.local_space, self.predicted_display_time)
             .ok()?;
         let valid = openxr::SpaceLocationFlags::ORIENTATION_VALID
@@ -78,6 +82,11 @@ impl XRRenderer {
             return None;
         }
         Some(location.pose)
+    }
+
+    /// Where is the headset right now, relative to the play-space origin?
+    pub(crate) fn locate_head(&self) -> Option<openxr::Posef> {
+        self.locate(&self.view_space)
     }
 }
 
