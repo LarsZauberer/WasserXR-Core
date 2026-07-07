@@ -6,23 +6,38 @@ use rapier3d::prelude::{
 };
 use wasserxr::{Uuid, scene::Scene, system};
 
-use crate::utils::object_sync::sync_objects;
+use crate::{model_asset::RawMesh, utils::object_sync::sync_objects};
 
 const PHYSICS_WORLD_RESOURCE: &str = "physics_world";
 
 #[derive(Default)]
 pub(crate) struct PhysicsWorld {
     world: RapierPhysicsWorld,
-    colliders: HashMap<Uuid, ColliderHandle>,
-    rigid_boxes: HashMap<Uuid, (RigidBodyHandle, ColliderHandle)>,
+    colliders: HashMap<Uuid, TrackedCollider>,
+    rigid_bodies: HashMap<Uuid, TrackedRigidBody>,
 }
 
-#[derive(Clone, Copy)]
+struct TrackedCollider {
+    handle: ColliderHandle,
+    model: String,
+    scale: [f32; 3],
+}
+
+struct TrackedRigidBody {
+    body: RigidBodyHandle,
+    collider: ColliderHandle,
+    model: String,
+    scale: [f32; 3],
+}
+
 struct TransformData {
     entity: Uuid,
     position: [f32; 3],
     rotation: [f32; 3],
     scale: [f32; 3],
+    model: String,
+    vertices: Vec<[f32; 3]>,
+    indices: Vec<[u32; 3]>,
 }
 
 pub(crate) fn ensure_physics_world(scene: &mut Scene) {
@@ -34,7 +49,7 @@ pub(crate) fn ensure_physics_world(scene: &mut Scene) {
     }
 }
 
-#[system(entities=[["PhysicsEngine"], ["BoxCollider", "Transform"], ["RigidBox", "Transform"]])]
+#[system(entities=[["PhysicsEngine"], ["Collider", "Transform"], ["RigidBody", "Transform"]])]
 fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     if entities[0].is_empty() {
         return;
@@ -45,8 +60,8 @@ fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         .map(|(gravity,)| *gravity)
         .unwrap_or([0.0, -9.81, 0.0]);
 
-    let colliders = collect_transforms(scene, &entities[1], "BoxCollider");
-    let rigid_boxes = collect_transforms(scene, &entities[2], "RigidBox");
+    let colliders = collect_transforms(scene, &entities[1], "Collider");
+    let rigid_bodies = collect_transforms(scene, &entities[2], "RigidBody");
 
     ensure_physics_world(scene);
 
@@ -57,9 +72,9 @@ fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
         world.world.gravity = Vector::new(gravity[0], gravity[1], gravity[2]);
         world.sync_colliders(&colliders);
-        world.sync_rigid_boxes(&rigid_boxes);
+        world.sync_rigid_bodies(&rigid_bodies);
         world.world.step();
-        world.rigid_box_updates()
+        world.rigid_body_updates()
     };
 
     for (entity, position, rotation) in updates {
@@ -85,58 +100,79 @@ impl PhysicsWorld {
             &mut self.colliders,
             transforms,
             |transform| transform.entity,
-            |world, transform| {
-                world.insert_collider(
-                    ColliderBuilder::new(cuboid_shape(transform.scale))
-                        .position(pose_from_transform(*transform)),
+            |world, transform| TrackedCollider {
+                handle: world.insert_collider(
+                    ColliderBuilder::new(trimesh_shape(transform))
+                        .position(pose_from_transform(transform)),
                     None,
-                )
+                ),
+                model: transform.model.clone(),
+                scale: transform.scale,
             },
-            |world, handle| {
-                let _ = world.remove_collider(handle);
+            |world, tracked| {
+                let _ = world.remove_collider(tracked.handle);
             },
-            |world, transform, handle| {
-                if let Some(collider) = world.colliders.get_mut(*handle) {
-                    collider.set_position(pose_from_transform(*transform));
-                    collider.set_shape(cuboid_shape(transform.scale));
+            |world, transform, tracked| {
+                if let Some(collider) = world.colliders.get_mut(tracked.handle) {
+                    collider.set_position(pose_from_transform(transform));
+
+                    // Rebuilding a trimesh is expensive, only do it when the shape changed
+                    if tracked.model != transform.model || tracked.scale != transform.scale {
+                        collider.set_shape(trimesh_shape(transform));
+                        tracked.model = transform.model.clone();
+                        tracked.scale = transform.scale;
+                    }
                 }
             },
         );
     }
 
-    fn sync_rigid_boxes(&mut self, transforms: &[TransformData]) {
+    fn sync_rigid_bodies(&mut self, transforms: &[TransformData]) {
         sync_objects(
             &mut self.world,
-            &mut self.rigid_boxes,
+            &mut self.rigid_bodies,
             transforms,
             |transform| transform.entity,
             |world, transform| {
-                world.insert(
-                    RigidBodyBuilder::dynamic().pose(pose_from_transform(*transform)),
-                    ColliderBuilder::new(cuboid_shape(transform.scale)),
-                )
+                let (body, collider) = world.insert(
+                    RigidBodyBuilder::dynamic().pose(pose_from_transform(transform)),
+                    ColliderBuilder::new(convex_decomposition_shape(transform)),
+                );
+                TrackedRigidBody {
+                    body,
+                    collider,
+                    model: transform.model.clone(),
+                    scale: transform.scale,
+                }
             },
-            |world, (body, _)| {
-                let _ = world.remove_body(body);
+            |world, tracked| {
+                let _ = world.remove_body(tracked.body);
             },
-            |world, transform, (body_handle, collider_handle)| {
-                if let Some(body) = world.bodies.get_mut(*body_handle) {
+            |world, transform, tracked| {
+                if let Some(body) = world.bodies.get_mut(tracked.body) {
                     // TODO: Optimization later to not always wake up every physics entity at every
                     // tick. Check if the position has really changed
-                    body.set_position(pose_from_transform(*transform), true);
+                    body.set_position(pose_from_transform(transform), true);
                 }
-                if let Some(collider) = world.colliders.get_mut(*collider_handle) {
-                    collider.set_shape(cuboid_shape(transform.scale));
+
+                // Rebuilding the convex decomposition is expensive, only do it when the
+                // shape changed
+                if tracked.model != transform.model || tracked.scale != transform.scale {
+                    if let Some(collider) = world.colliders.get_mut(tracked.collider) {
+                        collider.set_shape(convex_decomposition_shape(transform));
+                    }
+                    tracked.model = transform.model.clone();
+                    tracked.scale = transform.scale;
                 }
             },
         );
     }
 
-    fn rigid_box_updates(&self) -> Vec<(Uuid, [f32; 3], [f32; 3])> {
-        self.rigid_boxes
+    fn rigid_body_updates(&self) -> Vec<(Uuid, [f32; 3], [f32; 3])> {
+        self.rigid_bodies
             .iter()
-            .filter_map(|(entity, (body_handle, _))| {
-                let body = self.world.bodies.get(*body_handle)?;
+            .filter_map(|(entity, tracked)| {
+                let body = self.world.bodies.get(tracked.body)?;
                 let position = body.translation();
                 let (x, y, z) = body.rotation().to_euler(EulerRot::XYZ);
 
@@ -150,7 +186,7 @@ impl PhysicsWorld {
     }
 }
 
-fn collect_transforms(scene: &Scene, entities: &[Uuid], component: &str) -> Vec<TransformData> {
+fn collect_transforms(scene: &mut Scene, entities: &[Uuid], component: &str) -> Vec<TransformData> {
     entities
         .iter()
         .filter_map(|entity| {
@@ -161,23 +197,65 @@ fn collect_transforms(scene: &Scene, entities: &[Uuid], component: &str) -> Vec<
             ) else {
                 return None;
             };
+            let position = *position;
+            let rotation = *rotation;
 
-            // The box size lives on the collider/rigidbox component, not the Transform.
-            let Ok((scale,)) = scene.query::<(&[f32; 3],)>(*entity, component, &["scale"]) else {
+            // The shape size and model live on the collider/rigidbody component, not the
+            // Transform.
+            let Ok((scale, model)) =
+                scene.query::<(&[f32; 3], &String)>(*entity, component, &["scale", "model"])
+            else {
+                return None;
+            };
+            let scale = *scale;
+            let model = model.clone();
+
+            if model.is_empty() || scene.ensure_asset_loaded("ModelAsset", &model).is_err() {
+                return None;
+            }
+
+            let Ok((raw_meshes,)) =
+                scene.asset_query_loaded::<(&Vec<RawMesh>,)>("ModelAsset", &model, &["raw_meshes"])
+            else {
                 return None;
             };
 
+            let (vertices, indices) = merge_raw_meshes(raw_meshes);
+            if vertices.is_empty() || indices.is_empty() {
+                return None;
+            }
+
             Some(TransformData {
                 entity: *entity,
-                position: *position,
-                rotation: *rotation,
-                scale: *scale,
+                position,
+                rotation,
+                scale,
+                model,
+                vertices,
+                indices,
             })
         })
         .collect()
 }
 
-fn pose_from_transform(transform: TransformData) -> Pose {
+fn merge_raw_meshes(raw_meshes: &[RawMesh]) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for mesh in raw_meshes {
+        let base = vertices.len() as u32;
+        vertices.extend_from_slice(&mesh.vertices);
+        indices.extend(
+            mesh.indices
+                .chunks_exact(3)
+                .map(|triangle| [triangle[0] + base, triangle[1] + base, triangle[2] + base]),
+        );
+    }
+
+    (vertices, indices)
+}
+
+fn pose_from_transform(transform: &TransformData) -> Pose {
     Pose::from_parts(
         Vector::new(
             transform.position[0],
@@ -193,6 +271,33 @@ fn pose_from_transform(transform: TransformData) -> Pose {
     )
 }
 
+// The model vertices are used 1:1 with the component scale, matching a rendered model
+// at that Transform scale.
+fn scaled_vertices(transform: &TransformData) -> Vec<Vector> {
+    transform
+        .vertices
+        .iter()
+        .map(|vertex| {
+            Vector::new(
+                vertex[0] * transform.scale[0],
+                vertex[1] * transform.scale[1],
+                vertex[2] * transform.scale[2],
+            )
+        })
+        .collect()
+}
+
+fn trimesh_shape(transform: &TransformData) -> SharedShape {
+    // The mesh data is never empty (filtered while collecting), so this only falls back
+    // on a degenerate mesh.
+    SharedShape::trimesh(scaled_vertices(transform), transform.indices.clone())
+        .unwrap_or_else(|_| cuboid_shape(transform.scale))
+}
+
+fn convex_decomposition_shape(transform: &TransformData) -> SharedShape {
+    SharedShape::convex_decomposition(&scaled_vertices(transform), &transform.indices)
+}
+
 fn cuboid_shape(scale: [f32; 3]) -> SharedShape {
     SharedShape::cuboid(
         half_extent(scale[0]),
@@ -201,8 +306,6 @@ fn cuboid_shape(scale: [f32; 3]) -> SharedShape {
     )
 }
 
-// cube.obj is 2 units wide, so a component scale maps 1:1 to the rapier cuboid
-// half-extent: full collider size = 2 * scale = the rendered size at that Transform scale.
 fn half_extent(scale: f32) -> f32 {
     scale.abs().max(0.001)
 }

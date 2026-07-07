@@ -12,7 +12,7 @@ static DEBUG_COLLIDER: LazyLock<Mutex<HashMap<Uuid, Uuid>>> =
 static DEBUG_RIGID: LazyLock<Mutex<HashMap<Uuid, Uuid>>> =
     LazyLock::new(|| Mutex::new(HashMap::default()));
 
-#[system(entities=[["BoxCollider", "Transform"], ["RigidBox", "Transform"]])]
+#[system(entities=[["Collider", "Transform"], ["RigidBody", "Transform"]])]
 fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     let Ok(mut colliders) = DEBUG_COLLIDER.lock() else {
         return;
@@ -30,8 +30,7 @@ fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         scene,
         &mut colliders,
         &entities[0],
-        "BoxCollider",
-        "./models/cube.obj",
+        "Collider",
         "./materials/debug.json",
     );
 
@@ -39,8 +38,7 @@ fn debug_physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         scene,
         &mut rigids,
         &entities[1],
-        "RigidBox",
-        "./models/cube.obj",
+        "RigidBody",
         "./materials/debug.json",
     );
 }
@@ -73,7 +71,6 @@ fn sync_debug_entities(
     map: &mut HashMap<Uuid, Uuid>,
     entities: &[Uuid],
     component: &str,
-    model: &str,
     material: &str,
 ) {
     sync_objects(
@@ -93,7 +90,7 @@ fn sync_debug_entities(
             let _ = scene.remove_entity(debug_entity);
         },
         |scene, entity, debug_entity| {
-            update_debug_entity(scene, *entity, *debug_entity, component, model, material);
+            update_debug_entity(scene, *entity, *debug_entity, component, material);
         },
     );
 }
@@ -104,11 +101,20 @@ fn update_debug_entity(
     entity: Uuid,
     debug_entity: Uuid,
     component: &str,
-    model: &str,
     material: &str,
 ) {
     ensure_component_exists(scene, debug_entity, "Model");
     ensure_component_exists(scene, debug_entity, "Transform");
+
+    // The model and scale live on the collider/rigidbody component. The debug entity
+    // mirrors them so it renders the same mesh the physics shape was built from.
+    let Ok((scale, model)) =
+        scene.query::<(&[f32; 3], &String)>(entity, component, &["scale", "model"])
+    else {
+        return;
+    };
+    let scale = *scale;
+    let model = model.clone();
 
     let Ok((entity_model, entity_material)) = scene.query_mut::<(&mut String, &mut String)>(
         debug_entity,
@@ -118,7 +124,7 @@ fn update_debug_entity(
         return;
     };
 
-    *entity_model = model.to_owned();
+    *entity_model = model;
     *entity_material = material.to_owned();
 
     let Ok((position, rotation)) =
@@ -129,13 +135,6 @@ fn update_debug_entity(
 
     let position = *position;
     let rotation = *rotation;
-
-    // The box size lives on the collider/rigidbox component and is used 1:1 with
-    // the Transform scale (cube.obj is 2 units, matching the collider's full size).
-    let Ok((scale,)) = scene.query::<(&[f32; 3],)>(entity, component, &["scale"]) else {
-        return;
-    };
-    let scale = *scale;
 
     let Ok((debug_position, debug_rotation, debug_scale)) =
         scene.query_mut::<(&mut [f32; 3], &mut [f32; 3], &mut [f32; 3])>(

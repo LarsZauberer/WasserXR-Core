@@ -1,41 +1,49 @@
 use wasserxr::{component, component_creator, scene::Scene};
 
 #[component]
-struct BoxCollider {
+struct Collider {
     #[mutable]
     scale: [f32; 3],
+
+    #[mutable]
+    model: String,
 }
 
-impl Default for BoxCollider {
+impl Default for Collider {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
+            model: "./models/cube.obj".to_owned(),
         }
     }
 }
 
-#[component_creator(BoxCollider)]
-fn create_box_collider(_scene: &mut Scene) -> Option<BoxCollider> {
-    Some(BoxCollider::default())
+#[component_creator(Collider)]
+fn create_collider(_scene: &mut Scene) -> Option<Collider> {
+    Some(Collider::default())
 }
 
 #[component]
-struct RigidBox {
+struct RigidBody {
     #[mutable]
     scale: [f32; 3],
+
+    #[mutable]
+    model: String,
 }
 
-impl Default for RigidBox {
+impl Default for RigidBody {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
+            model: "./models/cube.obj".to_owned(),
         }
     }
 }
 
-#[component_creator(RigidBox)]
-fn create_rigid_box(_scene: &mut Scene) -> Option<RigidBox> {
-    Some(RigidBox::default())
+#[component_creator(RigidBody)]
+fn create_rigid_body(_scene: &mut Scene) -> Option<RigidBody> {
+    Some(RigidBody::default())
 }
 
 #[component]
