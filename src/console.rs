@@ -42,6 +42,18 @@ impl ConsoleTerminal {
     {
         let _ = self.terminal.draw(render_callback);
     }
+
+    fn area(&self) -> Rect {
+        self.terminal
+            .size()
+            .map(|size| Rect {
+                x: 0,
+                y: 0,
+                width: size.width,
+                height: size.height,
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl Drop for ConsoleTerminal {
@@ -72,6 +84,26 @@ enum Screen {
         scroll: usize,
         follow: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+// Input handling needs layout facts, but drawing must not mutate state. This is to keep a clean MVC
+// design pattern
+struct ConsoleInputContext {
+    visible_log_lines: u16,
+}
+
+impl ConsoleInputContext {
+    fn new(area: Rect) -> Self {
+        Self {
+            // Log scrolling stops at the last visible page, so transition needs this bound.
+            visible_log_lines: if can_draw_console(area) {
+                log_area_height(area)
+            } else {
+                0
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -355,7 +387,11 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
         .unwrap_or_default();
 
     if let Some(key) = get_input() {
-        state = transition(scene, key, state);
+        let area = scene
+            .get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE)
+            .map(|terminal| terminal.borrow().area())
+            .unwrap_or_default();
+        state = transition(scene, key, ConsoleInputContext::new(area), state);
     }
 
     set_resource(scene, STATE_RESOURCE, state.clone());
@@ -444,7 +480,12 @@ fn parse_key(bytes: &[u8]) -> Option<KeyCode> {
     }
 }
 
-fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
+fn transition(
+    scene: &mut Scene,
+    input: KeyCode,
+    context: ConsoleInputContext,
+    state: Screen,
+) -> Screen {
     match state {
         // Entity List
         Screen::EntityList(index) => match input {
@@ -815,23 +856,25 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             },
             KeyCode::Down | KeyCode::Char('j') => {
                 let log_count = filtered_logs(scene, level).len();
+                let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
-                    log_count.saturating_sub(1)
+                    max_scroll
                 } else {
-                    scroll.min(log_count.saturating_sub(1))
+                    clamp_log_scroll(scroll, log_count, context.visible_log_lines)
                 };
                 Screen::LogList {
                     level,
-                    scroll: index_add_no_loop(scroll, log_count.saturating_sub(1)),
+                    scroll: index_add_no_loop(scroll, max_scroll),
                     follow: false,
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let log_count = filtered_logs(scene, level).len();
+                let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
-                    log_count.saturating_sub(1)
+                    max_scroll
                 } else {
-                    scroll.min(log_count.saturating_sub(1))
+                    clamp_log_scroll(scroll, log_count, context.visible_log_lines)
                 };
                 Screen::LogList {
                     level,
@@ -848,8 +891,8 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
         Screen::Prompt(mut prompt) => match input {
             KeyCode::Esc => *prompt.on_cancel,
             KeyCode::Backspace => {
-                prompt.offset = index_sub_no_loop(prompt.offset);
-                if prompt.offset < prompt.text.len() {
+                if prompt.offset > 0 {
+                    prompt.offset = index_sub_no_loop(prompt.offset);
                     prompt.text.remove(prompt.offset);
                 }
                 Screen::Prompt(prompt)
@@ -913,6 +956,22 @@ fn index_sub_with_loop(index: usize, len: usize) -> usize {
     } else {
         index - 1
     }
+}
+
+fn log_area_height(area: Rect) -> u16 {
+    let main_area = Block::bordered().inner(area);
+    let (_, content_area, _) = split_header_content_footer(main_area);
+    let (_, log_area) = split_header_content(content_area);
+
+    log_area.height
+}
+
+fn max_log_scroll(log_count: usize, visible_lines: u16) -> usize {
+    log_count.saturating_sub(visible_lines.max(1) as usize)
+}
+
+fn clamp_log_scroll(scroll: usize, log_count: usize, visible_lines: u16) -> usize {
+    scroll.min(max_log_scroll(log_count, visible_lines))
 }
 
 fn draw(frame: &mut Frame, scene: &Scene, state: Screen) {
@@ -1104,14 +1163,11 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
         })
         .collect();
 
-    let scroll = if follow {
-        lines.len().saturating_sub(1)
+    let visible_start = if follow {
+        max_log_scroll(lines.len(), log_area.height)
     } else {
-        scroll.min(lines.len().saturating_sub(1))
+        clamp_log_scroll(scroll, lines.len(), log_area.height)
     };
-    let visible_start = scroll
-        .saturating_add(1)
-        .saturating_sub(log_area.height as usize);
     let list = Paragraph::new(lines).scroll((visible_start as u16, 0));
     frame.render_widget(list, log_area);
     draw_keymap_hint(
