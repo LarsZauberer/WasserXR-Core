@@ -42,6 +42,18 @@ impl ConsoleTerminal {
     {
         let _ = self.terminal.draw(render_callback);
     }
+
+    fn area(&self) -> Rect {
+        self.terminal
+            .size()
+            .map(|size| Rect {
+                x: 0,
+                y: 0,
+                width: size.width,
+                height: size.height,
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl Drop for ConsoleTerminal {
@@ -72,6 +84,26 @@ enum Screen {
         scroll: usize,
         follow: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+// Input handling needs layout facts, but drawing must not mutate state. This is to keep a clean MVC
+// design pattern
+struct ConsoleInputContext {
+    visible_log_lines: u16,
+}
+
+impl ConsoleInputContext {
+    fn new(area: Rect) -> Self {
+        Self {
+            // Log scrolling stops at the last visible page, so transition needs this bound.
+            visible_log_lines: if can_draw_console(area) {
+                log_area_height(area)
+            } else {
+                0
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -355,21 +387,22 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
         .unwrap_or_default();
 
     if let Some(key) = get_input() {
-        state = transition(scene, key, state);
+        let area = scene
+            .get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE)
+            .map(|terminal| terminal.borrow().area())
+            .unwrap_or_default();
+        state = transition(scene, key, ConsoleInputContext::new(area), state);
     }
 
+    set_resource(scene, STATE_RESOURCE, state.clone());
+
     let Ok(terminal) = scene.get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE) else {
-        set_resource(scene, STATE_RESOURCE, state);
         return;
     };
 
-    let mut state_to_store = state.clone();
     terminal.borrow_mut().draw(|frame| {
-        state_to_store = normalize_state_for_frame(scene, state.clone(), frame.area());
-        draw(frame, scene, state_to_store.clone());
+        draw(frame, scene, state.clone());
     });
-
-    set_resource(scene, STATE_RESOURCE, state_to_store);
 }
 
 #[attacher(console)]
@@ -447,7 +480,12 @@ fn parse_key(bytes: &[u8]) -> Option<KeyCode> {
     }
 }
 
-fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
+fn transition(
+    scene: &mut Scene,
+    input: KeyCode,
+    context: ConsoleInputContext,
+    state: Screen,
+) -> Screen {
     match state {
         // Entity List
         Screen::EntityList(index) => match input {
@@ -818,16 +856,26 @@ fn transition(scene: &mut Scene, input: KeyCode, state: Screen) -> Screen {
             },
             KeyCode::Down | KeyCode::Char('j') => {
                 let log_count = filtered_logs(scene, level).len();
-                let scroll = scroll.min(log_count.saturating_sub(1));
+                let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
+                let scroll = if follow {
+                    max_scroll
+                } else {
+                    clamp_log_scroll(scroll, log_count, context.visible_log_lines)
+                };
                 Screen::LogList {
                     level,
-                    scroll: index_add_no_loop(scroll, log_count.saturating_sub(1)),
+                    scroll: index_add_no_loop(scroll, max_scroll),
                     follow: false,
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 let log_count = filtered_logs(scene, level).len();
-                let scroll = scroll.min(log_count.saturating_sub(1));
+                let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
+                let scroll = if follow {
+                    max_scroll
+                } else {
+                    clamp_log_scroll(scroll, log_count, context.visible_log_lines)
+                };
                 Screen::LogList {
                     level,
                     scroll: index_sub_no_loop(scroll),
@@ -910,31 +958,6 @@ fn index_sub_with_loop(index: usize, len: usize) -> usize {
     }
 }
 
-fn normalize_state_for_frame(scene: &Scene, state: Screen, area: Rect) -> Screen {
-    match state {
-        Screen::LogList {
-            level,
-            scroll,
-            follow,
-        } if can_draw_console(area) => {
-            let visible_lines = log_area_height(area);
-            let log_count = filtered_logs(scene, level).len();
-            let scroll = if follow {
-                max_log_scroll(log_count, visible_lines)
-            } else {
-                clamp_log_scroll(scroll, log_count, visible_lines)
-            };
-
-            Screen::LogList {
-                level,
-                scroll,
-                follow,
-            }
-        }
-        state => state,
-    }
-}
-
 fn log_area_height(area: Rect) -> u16 {
     let main_area = Block::bordered().inner(area);
     let (_, content_area, _) = split_header_content_footer(main_area);
@@ -944,7 +967,7 @@ fn log_area_height(area: Rect) -> u16 {
 }
 
 fn max_log_scroll(log_count: usize, visible_lines: u16) -> usize {
-    log_count.saturating_sub(visible_lines as usize)
+    log_count.saturating_sub(visible_lines.max(1) as usize)
 }
 
 fn clamp_log_scroll(scroll: usize, log_count: usize, visible_lines: u16) -> usize {
