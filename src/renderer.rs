@@ -4,7 +4,7 @@ use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspecti
 use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
 use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
-use crate::{material_asset::MaterialData, model_asset::Mesh, window::get_event_loop};
+use crate::{material_asset::MaterialData, opengl_model_asset::Mesh, window::get_event_loop};
 
 pub type Display = glium::backend::glutin::Display<glium::glutin::surface::WindowSurface>;
 
@@ -109,7 +109,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         }
 
         if scene
-            .ensure_asset_loaded("ModelAsset", &model_path)
+            .ensure_asset_loaded("OpenGLModelAsset", &model_path)
             .is_err()
         {
             continue;
@@ -145,7 +145,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         };
 
         let Ok((meshes,)) =
-            scene.asset_query_loaded::<(&Vec<Mesh>,)>("ModelAsset", &model_path, &["meshes"])
+            scene.asset_query_loaded::<(&Vec<Mesh>,)>("OpenGLModelAsset", &model_path, &["meshes"])
         else {
             continue;
         };
