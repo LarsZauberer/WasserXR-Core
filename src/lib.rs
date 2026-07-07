@@ -8,4 +8,5 @@ pub(crate) mod physics;
 pub(crate) mod renderer;
 pub(crate) mod shader_asset;
 pub(crate) mod transform;
+pub(crate) mod utils;
 pub(crate) mod window;

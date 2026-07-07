@@ -6,6 +6,8 @@ use rapier3d::prelude::{
 };
 use wasserxr::{Uuid, scene::Scene, system};
 
+use crate::utils::object_sync::sync_objects;
+
 const PHYSICS_WORLD_RESOURCE: &str = "physics_world";
 
 #[derive(Default)]
@@ -78,77 +80,56 @@ fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
 impl PhysicsWorld {
     fn sync_colliders(&mut self, transforms: &[TransformData]) {
-        let stale_entities: Vec<_> = self
-            .colliders
-            .keys()
-            .filter(|entity| {
-                !transforms
-                    .iter()
-                    .any(|transform| transform.entity == **entity)
-            })
-            .copied()
-            .collect();
-
-        for entity in stale_entities {
-            if let Some(handle) = self.colliders.remove(&entity) {
-                let _ = self.world.remove_collider(handle);
-            }
-        }
-
-        for transform in transforms {
-            let pose = pose_from_transform(*transform);
-            if let Some(handle) = self.colliders.get(&transform.entity) {
-                if let Some(collider) = self.world.colliders.get_mut(*handle) {
-                    collider.set_position(pose);
+        sync_objects(
+            &mut self.world,
+            &mut self.colliders,
+            transforms,
+            |transform| transform.entity,
+            |world, transform| {
+                world.insert_collider(
+                    ColliderBuilder::new(cuboid_shape(transform.scale))
+                        .position(pose_from_transform(*transform)),
+                    None,
+                )
+            },
+            |world, handle| {
+                let _ = world.remove_collider(handle);
+            },
+            |world, transform, handle| {
+                if let Some(collider) = world.colliders.get_mut(*handle) {
+                    collider.set_position(pose_from_transform(*transform));
                     collider.set_shape(cuboid_shape(transform.scale));
                 }
-            } else {
-                let handle = self.world.insert_collider(
-                    ColliderBuilder::new(cuboid_shape(transform.scale)).position(pose),
-                    None,
-                );
-                self.colliders.insert(transform.entity, handle);
-            }
-        }
+            },
+        );
     }
 
     fn sync_rigid_boxes(&mut self, transforms: &[TransformData]) {
-        let stale_entities: Vec<_> = self
-            .rigid_boxes
-            .keys()
-            .filter(|entity| {
-                !transforms
-                    .iter()
-                    .any(|transform| transform.entity == **entity)
-            })
-            .copied()
-            .collect();
-
-        for entity in stale_entities {
-            if let Some((body, _)) = self.rigid_boxes.remove(&entity) {
-                let _ = self.world.remove_body(body);
-            }
-        }
-
-        for transform in transforms {
-            let pose = pose_from_transform(*transform);
-            if let Some((body_handle, collider_handle)) = self.rigid_boxes.get(&transform.entity) {
-                if let Some(body) = self.world.bodies.get_mut(*body_handle) {
+        sync_objects(
+            &mut self.world,
+            &mut self.rigid_boxes,
+            transforms,
+            |transform| transform.entity,
+            |world, transform| {
+                world.insert(
+                    RigidBodyBuilder::dynamic().pose(pose_from_transform(*transform)),
+                    ColliderBuilder::new(cuboid_shape(transform.scale)),
+                )
+            },
+            |world, (body, _)| {
+                let _ = world.remove_body(body);
+            },
+            |world, transform, (body_handle, collider_handle)| {
+                if let Some(body) = world.bodies.get_mut(*body_handle) {
                     // TODO: Optimization later to not always wake up every physics entity at every
                     // tick. Check if the position has really changed
-                    body.set_position(pose, true);
+                    body.set_position(pose_from_transform(*transform), true);
                 }
-                if let Some(collider) = self.world.colliders.get_mut(*collider_handle) {
+                if let Some(collider) = world.colliders.get_mut(*collider_handle) {
                     collider.set_shape(cuboid_shape(transform.scale));
                 }
-            } else {
-                let (body, collider) = self.world.insert(
-                    RigidBodyBuilder::dynamic().pose(pose),
-                    ColliderBuilder::new(cuboid_shape(transform.scale)),
-                );
-                self.rigid_boxes.insert(transform.entity, (body, collider));
-            }
-        }
+            },
+        );
     }
 
     fn rigid_box_updates(&self) -> Vec<(Uuid, [f32; 3], [f32; 3])> {

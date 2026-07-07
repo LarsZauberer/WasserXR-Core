@@ -5,6 +5,8 @@ use std::{
 
 use wasserxr::{Uuid, debug, detacher, info, scene::Scene, system};
 
+use crate::utils::object_sync::sync_objects;
+
 static DEBUG_COLLIDER: LazyLock<Mutex<HashMap<Uuid, Uuid>>> =
     LazyLock::new(|| Mutex::new(HashMap::default()));
 static DEBUG_RIGID: LazyLock<Mutex<HashMap<Uuid, Uuid>>> =
@@ -74,88 +76,80 @@ fn sync_debug_entities(
     model: &str,
     material: &str,
 ) {
-    // Update the entities
-    let stale_entities: Vec<Uuid> = map
-        .keys()
-        .filter(|id| !entities.contains(id))
-        .copied()
-        .collect();
-    let new_entities: Vec<Uuid> = entities
-        .iter()
-        .filter(|id| !map.contains_key(id))
-        .copied()
-        .collect();
+    sync_objects(
+        scene,
+        map,
+        entities,
+        |entity| *entity,
+        |scene, entity| {
+            let debug_entity = scene.add_entity();
+            if let Ok(name) = scene.get_entity_name(*entity) {
+                let new_name = name.to_owned() + "_physics_debug";
+                let _ = scene.set_entity_name(debug_entity, new_name);
+            }
+            debug_entity
+        },
+        |scene, debug_entity| {
+            let _ = scene.remove_entity(debug_entity);
+        },
+        |scene, entity, debug_entity| {
+            update_debug_entity(scene, *entity, *debug_entity, component, model, material);
+        },
+    );
+}
 
-    for entity in stale_entities {
-        let Some(debug_entity) = map.remove(&entity) else {
-            continue;
-        };
-        let _ = scene.remove_entity(debug_entity);
-    }
+// Make sure the debug entity has its model/material set with the correct transform
+fn update_debug_entity(
+    scene: &mut Scene,
+    entity: Uuid,
+    debug_entity: Uuid,
+    component: &str,
+    model: &str,
+    material: &str,
+) {
+    ensure_component_exists(scene, debug_entity, "Model");
+    ensure_component_exists(scene, debug_entity, "Transform");
 
-    for entity in new_entities {
-        let debug_entity = scene.add_entity();
-        if let Ok(name) = scene.get_entity_name(entity) {
-            let new_name = name.to_owned() + "_physics_debug";
-            let _ = scene.set_entity_name(debug_entity, new_name);
-        }
-        let _ = map.insert(entity, debug_entity);
-    }
+    let Ok((entity_model, entity_material)) = scene.query_mut::<(&mut String, &mut String)>(
+        debug_entity,
+        "Model",
+        &["model", "material"],
+    ) else {
+        return;
+    };
 
-    // Make sure all the debug entities have their model/material set with their correct transform
-    for (entity, debug_entity) in map.iter() {
-        ensure_component_exists(scene, *debug_entity, "Model");
-        ensure_component_exists(scene, *debug_entity, "Transform");
+    *entity_model = model.to_owned();
+    *entity_material = material.to_owned();
 
-        {
-            let Ok((entity_model, entity_material)) = scene
-                .query_mut::<(&mut String, &mut String)>(
-                    *debug_entity,
-                    "Model",
-                    &["model", "material"],
-                )
-            else {
-                continue;
-            };
+    let Ok((position, rotation)) =
+        scene.query::<(&[f32; 3], &[f32; 3])>(entity, "Transform", &["position", "rotation"])
+    else {
+        return;
+    };
 
-            *entity_model = model.to_owned();
-            *entity_material = material.to_owned();
-        }
+    let position = *position;
+    let rotation = *rotation;
 
-        {
-            let Ok((position, rotation)) = scene.query::<(&[f32; 3], &[f32; 3])>(
-                *entity,
-                "Transform",
-                &["position", "rotation"],
-            ) else {
-                continue;
-            };
+    // The box size lives on the collider/rigidbox component and is used 1:1 with
+    // the Transform scale (cube.obj is 2 units, matching the collider's full size).
+    let Ok((scale,)) = scene.query::<(&[f32; 3],)>(entity, component, &["scale"]) else {
+        return;
+    };
+    let scale = *scale;
 
-            let position = *position;
-            let rotation = *rotation;
+    let Ok((debug_position, debug_rotation, debug_scale)) =
+        scene.query_mut::<(&mut [f32; 3], &mut [f32; 3], &mut [f32; 3])>(
+            debug_entity,
+            "Transform",
+            &["position", "rotation", "scale"],
+        )
+    else {
+        return;
+    };
 
-            // The box size lives on the collider/rigidbox component and is used 1:1 with
-            // the Transform scale (cube.obj is 2 units, matching the collider's full size).
-            let Ok((scale,)) = scene.query::<(&[f32; 3],)>(*entity, component, &["scale"]) else {
-                continue;
-            };
-            let scale = *scale;
-
-            let Ok((debug_position, debug_rotation, debug_scale)) =
-                scene.query_mut::<(&mut [f32; 3], &mut [f32; 3], &mut [f32; 3])>(
-                    *debug_entity,
-                    "Transform",
-                    &["position", "rotation", "scale"],
-                )
-            else {
-                continue;
-            };
-
-            *debug_position = position;
-            *debug_rotation = rotation;
-            *debug_scale = scale;
-        }
-    }
+    *debug_position = position;
+    *debug_rotation = rotation;
+    *debug_scale = scale;
 }
 
 fn remove_orphan_debug_entities(
