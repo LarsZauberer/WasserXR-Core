@@ -8,8 +8,8 @@
 //! the headset spaces.
 //!
 //! This system mirrors those poses into two scene entities (one per hand,
-//! found by name) with a Transform and a Model, so the normal renderers
-//! draw the controllers like any other object.
+//! tagged with the XRController component) with a Transform and a Model, so
+//! the normal renderers draw the controllers like any other object.
 
 use std::cell::RefCell;
 
@@ -18,6 +18,7 @@ use wasserxr::{Uuid, scene::Scene, system};
 
 use crate::{
     renderer::transform_matrix,
+    xr::controller::XRControllerType,
     xr::math::pose_matrix,
     xr::renderer::{XR_RENDERER_RESOURCE, XRRenderer},
     xr::session::{XRSession, ensure_xrsession},
@@ -27,11 +28,6 @@ pub(crate) const XR_CONTROLLERS_RESOURCE: &str = "xr_controllers";
 
 /// The model drawn at each controller position.
 const CONTROLLER_MODEL: &str = "./models/cube.obj";
-
-/// Entity names for the two controllers: left hand, then right hand.
-/// The name is how we find the entities again — also after a hot-reload,
-/// which restores the entities but wipes this plugin's resources.
-const CONTROLLER_ENTITY_NAMES: [&str; 2] = ["XRControllerLeft", "XRControllerRight"];
 
 /// The OpenXR input state for the two controllers.
 pub(crate) struct XRControllers {
@@ -126,24 +122,39 @@ fn create_xr_controllers(session: &XRSession) -> XRControllers {
     }
 }
 
-/// Finds the two controller entities by name, creating them if missing.
-/// Looking them up by name (instead of remembering their ids) keeps a
+/// Finds the left and right controller entity among the ones tagged with
+/// the XRController component, creating missing ones. The first entity per
+/// hand wins; extra entities with the same hand are ignored. Identifying
+/// them by component (which survives scene serialization) keeps a
 /// hot-reload from duplicating them: the scene restores the entities while
 /// our resources start over empty.
-fn ensure_controller_entities(scene: &mut Scene) -> [Uuid; 2] {
-    CONTROLLER_ENTITY_NAMES.map(|name| {
-        let existing = scene
-            .get_entities()
-            .into_iter()
-            .find(|entity| scene.get_entity_name(*entity).is_ok_and(|n| n == name));
+fn ensure_controller_entities(scene: &mut Scene, tagged: &[Uuid]) -> [Uuid; 2] {
+    [
+        XRControllerType::LeftHandController,
+        XRControllerType::RightHandController,
+    ]
+    .map(|controller_type| {
+        let existing = tagged.iter().find(|entity| {
+            scene
+                .query::<(&XRControllerType,)>(**entity, "XRController", &["controller_type"])
+                .is_ok_and(|(tagged_type,)| *tagged_type == controller_type)
+        });
         if let Some(entity) = existing {
-            return entity;
+            return *entity;
         }
 
         let entity = scene.add_entity();
-        let _ = scene.set_entity_name(entity, name.to_owned());
+        let _ = scene.add_component(entity, "XRController".to_owned());
         let _ = scene.add_component(entity, "Transform".to_owned());
         let _ = scene.add_component(entity, "Model".to_owned());
+        // The XRController component starts as a left hand; set the real hand.
+        if let Ok((tagged_type,)) = scene.query_mut::<(&mut XRControllerType,)>(
+            entity,
+            "XRController",
+            &["controller_type"],
+        ) {
+            *tagged_type = controller_type;
+        }
         // The Model component starts with the default material but no
         // model; give it the cube so the controller is visible.
         if let Ok((model,)) = scene.query_mut::<(&mut String,)>(entity, "Model", &["model"]) {
@@ -153,7 +164,7 @@ fn ensure_controller_entities(scene: &mut Scene) -> [Uuid; 2] {
     })
 }
 
-#[system(entities=[["XROrigin"]])]
+#[system(entities=[["XROrigin"], ["XRController"]])]
 fn xr_controller_sync(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     // Controllers are tracked relative to the play space; without an
     // XROrigin we don't know where that is in the game world.
@@ -162,7 +173,7 @@ fn xr_controller_sync(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     }
 
     ensure_xr_controllers(scene);
-    let controller_entities = ensure_controller_entities(scene);
+    let controller_entities = ensure_controller_entities(scene, &entities[1]);
 
     // Where the XROrigin entity sits in the game world.
     let origin_world = scene
