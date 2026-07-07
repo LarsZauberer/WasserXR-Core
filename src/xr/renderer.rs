@@ -1,9 +1,9 @@
-//! Renders the scene into the VR headset through OpenXR.
+//! Renders the scene into the VR headset through OpenXR (6DOF).
 //!
-//! This is a deliberately simple renderer: there is no 3DOF/6DOF head
-//! tracking. The scene is rendered once per eye from the engine camera
-//! (with a small horizontal offset for stereo depth) and shown as a static
-//! image fixed in front of the eyes.
+//! The scene is rendered once per eye from the Camera entity, which the
+//! xr_camera_sync system keeps at the headset pose relative to the XROrigin
+//! entity. Each eye adds its own small offset and fov, both reported by the
+//! runtime, so moving and turning the head moves the view through the world.
 //!
 //! It reuses the flatscreen renderer helpers from `crate::renderer` and
 //! only replaces the render target: instead of the window backbuffer it
@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 
-use glam::{Mat4, Vec3, camera::rh::proj::opengl::perspective};
+use glam::{Mat4, camera::rh::proj::opengl::frustum};
 use glium::{
     framebuffer::{DepthRenderBuffer, SimpleFrameBuffer},
     texture::{DepthFormat, Dimensions, MipmapsOption, SrgbFormat, SrgbTexture2d},
@@ -21,7 +21,8 @@ use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
 use crate::{
     opengl::{Display, WINDOW_DISPLAY_RESOURCE},
-    renderer::{collect_render_items, draw_render_items, get_camera, view_matrix},
+    renderer::{collect_render_items, draw_render_items, get_camera, transform_matrix},
+    xr::math::{matrix_to_pose, pose_matrix},
     xr::session::{XRSession, ensure_xrsession},
 };
 
@@ -29,10 +30,6 @@ pub(crate) const XR_RENDERER_RESOURCE: &str = "xr_renderer";
 
 /// GL_SRGB8_ALPHA8, the standard color format for OpenGL XR swapchains.
 const GL_SRGB8_ALPHA8: u32 = 0x8C43;
-
-/// How far each eye is shifted sideways from the camera, in meters.
-/// Half of an average human eye distance (~64mm), gives stereo depth.
-const EYE_OFFSET: f32 = 0.032;
 
 /// One eye's render target: the OpenXR swapchain (a small pool of GL
 /// textures owned by the XR runtime) plus the glium wrappers to draw into it.
@@ -47,13 +44,14 @@ struct EyeTarget {
 }
 
 pub(crate) struct XRRenderer {
-    /// VIEW reference space: it follows the head, so rendering with an
-    /// identity pose keeps the image fixed in front of the eyes.
-    space: openxr::Space,
     /// LOCAL reference space: the world-anchored play-space origin, fixed
     /// where the headset was when the session started. Headset poses are
     /// measured relative to this space.
     local_space: openxr::Space,
+    /// VIEW reference space: it follows the head. Eye poses are queried
+    /// relative to it, and locating it inside `local_space` yields the
+    /// headset pose.
+    view_space: openxr::Space,
     /// Left eye, then right eye.
     eyes: Vec<EyeTarget>,
     /// True while the runtime allows rendering (between READY and STOPPING).
@@ -70,10 +68,8 @@ impl XRRenderer {
         if !self.session_running || self.predicted_display_time.as_nanos() == 0 {
             return None;
         }
-        // `space` is a VIEW space (it follows the head), so locating it
-        // inside the world-anchored LOCAL space yields the headset pose.
         let location = self
-            .space
+            .view_space
             .locate(&self.local_space, self.predicted_display_time)
             .ok()?;
         let valid = openxr::SpaceLocationFlags::ORIENTATION_VALID
@@ -176,18 +172,18 @@ fn create_xr_renderer(session: &XRSession, display: &Display) -> XRRenderer {
         })
         .collect();
 
-    let space = session
-        .session()
-        .create_reference_space(openxr::ReferenceSpaceType::VIEW, openxr::Posef::IDENTITY)
-        .expect("Failed to create reference space");
     let local_space = session
         .session()
         .create_reference_space(openxr::ReferenceSpaceType::LOCAL, openxr::Posef::IDENTITY)
         .expect("Failed to create local reference space");
+    let view_space = session
+        .session()
+        .create_reference_space(openxr::ReferenceSpaceType::VIEW, openxr::Posef::IDENTITY)
+        .expect("Failed to create view reference space");
 
     XRRenderer {
-        space,
         local_space,
+        view_space,
         eyes,
         session_running: false,
         predicted_display_time: openxr::Time::from_nanos(0),
@@ -226,17 +222,18 @@ fn poll_session_state(session: &XRSession, session_running: &mut bool) {
     }
 }
 
-/// A symmetric OpenXR field of view matching `perspective(fov, aspect_ratio, ...)`.
-/// The compositor needs to know the fov the image was rendered with.
-fn symmetric_fov(fov: f32, aspect_ratio: f32) -> openxr::Fovf {
-    let half_fov_vertical = fov / 2.0;
-    let half_fov_horizontal = (half_fov_vertical.tan() * aspect_ratio).atan();
-    openxr::Fovf {
-        angle_left: -half_fov_horizontal,
-        angle_right: half_fov_horizontal,
-        angle_up: half_fov_vertical,
-        angle_down: -half_fov_vertical,
-    }
+/// Builds the projection matrix for one eye from the asymmetric fov OpenXR
+/// reports. VR lenses are not centered in front of the eyes, so the view
+/// frustum reaches differently far to the left/right/up/down.
+fn projection_from_fov(fov: openxr::Fovf, near: f32, far: f32) -> Mat4 {
+    frustum(
+        fov.angle_left.tan() * near,
+        fov.angle_right.tan() * near,
+        fov.angle_down.tan() * near,
+        fov.angle_up.tan() * near,
+        near,
+        far,
+    )
 }
 
 #[attacher(xr_renderer)]
@@ -266,6 +263,12 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
     let render_items = collect_render_items(scene, &entities[1]);
 
+    // Where the XROrigin entity sits in the game world.
+    let origin_world = scene
+        .query::<(&[f32; 3], &[f32; 3])>(entities[2][0], "Transform", &["position", "rotation"])
+        .map(|(position, rotation)| transform_matrix(*position, *rotation))
+        .unwrap_or(Mat4::IDENTITY);
+
     let Ok(session) = scene.get_resource::<RefCell<XRSession>>("xrsession") else {
         return;
     };
@@ -282,11 +285,11 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     let window_display = window_display.borrow();
     let display = &window_display.1;
     let XRRenderer {
-        space,
+        local_space,
+        view_space,
         eyes,
         session_running,
         predicted_display_time,
-        ..
     } = &mut *renderer;
 
     // The runtime drives the session through states; react to them first.
@@ -322,10 +325,23 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     }
 
-    let view = view_matrix(&camera);
+    // Ask the runtime where each eye is relative to the head (it knows the
+    // player's real eye distance) and through which fov each eye looks.
+    let (_, eye_views) = session
+        .session()
+        .locate_views(
+            openxr::ViewConfigurationType::PRIMARY_STEREO,
+            frame_state.predicted_display_time,
+            view_space,
+        )
+        .expect("Failed to locate views");
+
+    // The Camera entity is the head: the xr_camera_sync system keeps it at
+    // the headset pose, so rendering from it follows the player's head.
+    let camera_world = transform_matrix(camera.position, camera.rotation);
 
     // Render the scene once per eye into the eye's swapchain texture.
-    for (index, eye) in eyes.iter_mut().enumerate() {
+    for (eye, eye_view) in eyes.iter_mut().zip(&eye_views) {
         // Ask the runtime for the next free texture of this swapchain.
         let image_index = eye
             .swapchain
@@ -335,35 +351,40 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
             .wait_image(openxr::Duration::INFINITE)
             .expect("Failed to wait for swapchain image");
 
-        // Shift the camera a little to the left/right so each eye gets a
-        // slightly different image (stereo depth).
-        let side = if index == 0 { -1.0 } else { 1.0 };
-        let eye_view = Mat4::from_translation(Vec3::new(-side * EYE_OFFSET, 0.0, 0.0)) * view;
-
-        let aspect_ratio = eye.width as f32 / eye.height as f32;
-        let projection = perspective(camera.fov, aspect_ratio, camera.near, camera.far);
+        // The pose of this eye in the game world: the camera (= head) plus
+        // the small offset of the eye from the head center.
+        let eye_world = camera_world * pose_matrix(eye_view.pose);
+        let projection = projection_from_fov(eye_view.fov, camera.near, camera.far);
 
         // Draw with the same helpers as the flatscreen renderer, just into
         // the swapchain texture instead of the window backbuffer.
         let mut framebuffer =
             SimpleFrameBuffer::with_depth_buffer(display, &eye.textures[image_index], &eye.depth)
                 .expect("Failed to create framebuffer");
-        draw_render_items(scene, &mut framebuffer, projection * eye_view, &render_items);
+        draw_render_items(
+            scene,
+            &mut framebuffer,
+            projection * eye_world.inverse(),
+            &render_items,
+        );
 
         eye.swapchain
             .release_image()
             .expect("Failed to release swapchain image");
     }
 
-    // Describe to the compositor what we rendered: one projection view per
-    // eye with an identity pose (static image, no tracking) and the fov the
-    // image was rendered with.
+    // Describe to the compositor what we rendered: for each eye the pose it
+    // was rendered from, expressed in the play-space (world -> play-space by
+    // undoing the XROrigin transform), and the fov that was used.
+    let origin_inverse = origin_world.inverse();
     let layer_views: Vec<_> = eyes
         .iter()
-        .map(|eye| {
+        .zip(&eye_views)
+        .map(|(eye, eye_view)| {
+            let eye_world = camera_world * pose_matrix(eye_view.pose);
             openxr::CompositionLayerProjectionView::new()
-                .pose(openxr::Posef::IDENTITY)
-                .fov(symmetric_fov(camera.fov, eye.width as f32 / eye.height as f32))
+                .pose(matrix_to_pose(origin_inverse * eye_world))
+                .fov(eye_view.fov)
                 .sub_image(
                     openxr::SwapchainSubImage::new()
                         .swapchain(&eye.swapchain)
@@ -379,7 +400,7 @@ fn xr_renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         .collect();
 
     let layer = openxr::CompositionLayerProjection::new()
-        .space(space)
+        .space(local_space)
         .views(&layer_views);
     session
         .frame_stream()
