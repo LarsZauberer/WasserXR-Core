@@ -20,9 +20,15 @@ pub struct Mesh {
     pub indices: IndexBuffer<u32>,
 }
 
+pub struct RawMesh {
+    pub vertices: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+}
+
 #[asset_type]
 struct ModelAsset {
     meshes: Vec<Mesh>,
+    raw_meshes: Vec<RawMesh>,
 }
 
 #[asset_type_creator(ModelAsset)]
@@ -45,10 +51,10 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
         return None;
     };
 
-    let meshes: Vec<Mesh> = model_scene
+    let (meshes, raw_meshes): (Vec<Mesh>, Vec<RawMesh>) = model_scene
         .meshes()
         .map(|mesh| {
-            let vertices = mesh
+            let positions = mesh
                 .vertices_iter()
                 .map(|vertex| [vertex.x, vertex.y, vertex.z])
                 .collect::<Vec<[f32; 3]>>();
@@ -57,11 +63,11 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
                 .map(|normals| [normals.x, normals.y, normals.z])
                 .collect::<Vec<[f32; 3]>>();
             let tex_coords = mesh.texture_coords2(0).unwrap_or_default();
-            let vertices = vertices
-                .into_iter()
+            let vertices = positions
+                .iter()
                 .enumerate()
                 .map(|(index, position)| Vertex {
-                    position,
+                    position: *position,
                     normal: normals.get(index).copied().unwrap_or([0.0, 0.0, 0.0]),
                     tex_coord: tex_coords
                         .get(index)
@@ -76,14 +82,20 @@ fn create_model_asset(scene: &mut Scene, data: &str) -> Option<ModelAsset> {
             let indices_buffer = IndexBuffer::new(display, TrianglesList, &indices)
                 .expect("Failed to create index buffer");
 
-            Mesh {
-                vertices: vertices_buffer,
-                indices: indices_buffer,
-            }
+            (
+                Mesh {
+                    vertices: vertices_buffer,
+                    indices: indices_buffer,
+                },
+                RawMesh {
+                    vertices: positions,
+                    indices,
+                },
+            )
         })
-        .collect();
+        .unzip();
 
-    let model = ModelAsset { meshes };
+    let model = ModelAsset { meshes, raw_meshes };
 
     Some(model)
 }
