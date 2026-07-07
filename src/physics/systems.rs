@@ -6,7 +6,7 @@ use rapier3d::prelude::{
 };
 use wasserxr::{Uuid, scene::Scene, system};
 
-use crate::{model_asset::RawMesh, utils::object_sync::sync_objects};
+use crate::utils::object_sync::sync_objects;
 
 const PHYSICS_WORLD_RESOURCE: &str = "physics_world";
 
@@ -36,8 +36,7 @@ struct TransformData {
     rotation: [f32; 3],
     scale: [f32; 3],
     model: String,
-    vertices: Vec<[f32; 3]>,
-    indices: Vec<[u32; 3]>,
+    shape: SharedShape,
 }
 
 pub(crate) fn ensure_physics_world(scene: &mut Scene) {
@@ -60,8 +59,8 @@ fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         .map(|(gravity,)| *gravity)
         .unwrap_or([0.0, -9.81, 0.0]);
 
-    let colliders = collect_transforms(scene, &entities[1], "Collider");
-    let rigid_bodies = collect_transforms(scene, &entities[2], "RigidBody");
+    let colliders = collect_transforms(scene, &entities[1], "Collider", "ColliderShapeAsset");
+    let rigid_bodies = collect_transforms(scene, &entities[2], "RigidBody", "RigidBodyShapeAsset");
 
     ensure_physics_world(scene);
 
@@ -102,7 +101,7 @@ impl PhysicsWorld {
             |transform| transform.entity,
             |world, transform| TrackedCollider {
                 handle: world.insert_collider(
-                    ColliderBuilder::new(trimesh_shape(transform))
+                    ColliderBuilder::new(scaled_shape(transform))
                         .position(pose_from_transform(transform)),
                     None,
                 ),
@@ -116,9 +115,9 @@ impl PhysicsWorld {
                 if let Some(collider) = world.colliders.get_mut(tracked.handle) {
                     collider.set_position(pose_from_transform(transform));
 
-                    // Rebuilding a trimesh is expensive, only do it when the shape changed
+                    // Rescaling a shape is expensive, only do it when the shape changed
                     if tracked.model != transform.model || tracked.scale != transform.scale {
-                        collider.set_shape(trimesh_shape(transform));
+                        collider.set_shape(scaled_shape(transform));
                         tracked.model = transform.model.clone();
                         tracked.scale = transform.scale;
                     }
@@ -136,7 +135,7 @@ impl PhysicsWorld {
             |world, transform| {
                 let (body, collider) = world.insert(
                     RigidBodyBuilder::dynamic().pose(pose_from_transform(transform)),
-                    ColliderBuilder::new(convex_decomposition_shape(transform)),
+                    ColliderBuilder::new(scaled_shape(transform)),
                 );
                 TrackedRigidBody {
                     body,
@@ -155,11 +154,10 @@ impl PhysicsWorld {
                     body.set_position(pose_from_transform(transform), true);
                 }
 
-                // Rebuilding the convex decomposition is expensive, only do it when the
-                // shape changed
+                // Rescaling a shape is expensive, only do it when the shape changed
                 if tracked.model != transform.model || tracked.scale != transform.scale {
                     if let Some(collider) = world.colliders.get_mut(tracked.collider) {
-                        collider.set_shape(convex_decomposition_shape(transform));
+                        collider.set_shape(scaled_shape(transform));
                     }
                     tracked.model = transform.model.clone();
                     tracked.scale = transform.scale;
@@ -186,7 +184,12 @@ impl PhysicsWorld {
     }
 }
 
-fn collect_transforms(scene: &mut Scene, entities: &[Uuid], component: &str) -> Vec<TransformData> {
+fn collect_transforms(
+    scene: &mut Scene,
+    entities: &[Uuid],
+    component: &str,
+    shape_asset: &str,
+) -> Vec<TransformData> {
     entities
         .iter()
         .filter_map(|entity| {
@@ -210,20 +213,16 @@ fn collect_transforms(scene: &mut Scene, entities: &[Uuid], component: &str) -> 
             let scale = *scale;
             let model = model.clone();
 
-            if model.is_empty() || scene.ensure_asset_loaded("ModelAsset", &model).is_err() {
+            if model.is_empty() || scene.ensure_asset_loaded(shape_asset, &model).is_err() {
                 return None;
             }
 
-            let Ok((raw_meshes,)) =
-                scene.asset_query_loaded::<(&Vec<RawMesh>,)>("ModelAsset", &model, &["raw_meshes"])
+            let Ok((shape,)) =
+                scene.asset_query_loaded::<(&SharedShape,)>(shape_asset, &model, &["shape"])
             else {
                 return None;
             };
-
-            let (vertices, indices) = merge_raw_meshes(raw_meshes);
-            if vertices.is_empty() || indices.is_empty() {
-                return None;
-            }
+            let shape = shape.clone();
 
             Some(TransformData {
                 entity: *entity,
@@ -231,28 +230,10 @@ fn collect_transforms(scene: &mut Scene, entities: &[Uuid], component: &str) -> 
                 rotation,
                 scale,
                 model,
-                vertices,
-                indices,
+                shape,
             })
         })
         .collect()
-}
-
-fn merge_raw_meshes(raw_meshes: &[RawMesh]) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-
-    for mesh in raw_meshes {
-        let base = vertices.len() as u32;
-        vertices.extend_from_slice(&mesh.vertices);
-        indices.extend(
-            mesh.indices
-                .chunks_exact(3)
-                .map(|triangle| [triangle[0] + base, triangle[1] + base, triangle[2] + base]),
-        );
-    }
-
-    (vertices, indices)
 }
 
 fn pose_from_transform(transform: &TransformData) -> Pose {
@@ -271,41 +252,21 @@ fn pose_from_transform(transform: &TransformData) -> Pose {
     )
 }
 
-// The model vertices are used 1:1 with the component scale, matching a rendered model
-// at that Transform scale.
-fn scaled_vertices(transform: &TransformData) -> Vec<Vector> {
+// Number of subdivisions used when scaling turns a round shape (e.g. a non-uniformly
+// scaled ball) into an approximated convex mesh.
+const SCALE_SUBDIVISIONS: u32 = 20;
+
+// The cached asset shape is used 1:1 with the component scale, matching a rendered
+// model at that Transform scale.
+fn scaled_shape(transform: &TransformData) -> SharedShape {
+    if transform.scale == [1.0, 1.0, 1.0] {
+        return transform.shape.clone();
+    }
+
+    let scale = Vector::new(transform.scale[0], transform.scale[1], transform.scale[2]);
     transform
-        .vertices
-        .iter()
-        .map(|vertex| {
-            Vector::new(
-                vertex[0] * transform.scale[0],
-                vertex[1] * transform.scale[1],
-                vertex[2] * transform.scale[2],
-            )
-        })
-        .collect()
-}
-
-fn trimesh_shape(transform: &TransformData) -> SharedShape {
-    // The mesh data is never empty (filtered while collecting), so this only falls back
-    // on a degenerate mesh.
-    SharedShape::trimesh(scaled_vertices(transform), transform.indices.clone())
-        .unwrap_or_else(|_| cuboid_shape(transform.scale))
-}
-
-fn convex_decomposition_shape(transform: &TransformData) -> SharedShape {
-    SharedShape::convex_decomposition(&scaled_vertices(transform), &transform.indices)
-}
-
-fn cuboid_shape(scale: [f32; 3]) -> SharedShape {
-    SharedShape::cuboid(
-        half_extent(scale[0]),
-        half_extent(scale[1]),
-        half_extent(scale[2]),
-    )
-}
-
-fn half_extent(scale: f32) -> f32 {
-    scale.abs().max(0.001)
+        .shape
+        .scale_dyn(scale, SCALE_SUBDIVISIONS)
+        .map(|shape| SharedShape(shape.into()))
+        .unwrap_or_else(|| transform.shape.clone())
 }

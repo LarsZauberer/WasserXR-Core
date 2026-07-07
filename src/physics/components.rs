@@ -13,7 +13,7 @@ impl Default for Collider {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
-            model: "./models/cube.obj".to_owned(),
+            model: "cuboid".to_owned(),
         }
     }
 }
@@ -36,7 +36,7 @@ impl Default for RigidBody {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
-            model: "./models/cube.obj".to_owned(),
+            model: "cuboid".to_owned(),
         }
     }
 }
