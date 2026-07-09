@@ -2623,9 +2623,9 @@ dependencies = [
 
 [[package]]
 name = "wasserxr"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f7bb90e9dfd3602bce63d1abbb5071bb65fe7657ea8d1f24d7fd44b86de6b72"
+checksum = "14324edb02ee0370b0578f7c1adfce1d81936fa80dbb93d32d3787ac23727cdb"
 dependencies = [
  "bincode",
  "cbindgen",
@@ -2655,9 +2655,9 @@ dependencies = [
 
 [[package]]
 name = "wasserxr-macros"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d76f20139ee60e122051f4f4d3b92fd857e3e0955191fb162d98d8265adfa5cb"
+checksum = "3705283bed980b9606528958cf2c7330a6296518a3ab223a0e04921a317a4a41"
 dependencies = [
  "proc-macro2",
  "quote",
