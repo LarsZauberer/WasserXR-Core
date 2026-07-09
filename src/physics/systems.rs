@@ -21,6 +21,7 @@ struct TrackedCollider {
     handle: ColliderHandle,
     model: String,
     scale: [f32; 3],
+    convex_decomposition: bool,
 }
 
 struct TrackedRigidBody {
@@ -28,6 +29,7 @@ struct TrackedRigidBody {
     collider: ColliderHandle,
     model: String,
     scale: [f32; 3],
+    convex_decomposition: bool,
 }
 
 struct TransformData {
@@ -36,6 +38,7 @@ struct TransformData {
     rotation: [f32; 3],
     scale: [f32; 3],
     model: String,
+    convex_decomposition: bool,
     shape: SharedShape,
 }
 
@@ -59,8 +62,8 @@ fn physics(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         .map(|(gravity,)| *gravity)
         .unwrap_or([0.0, -9.81, 0.0]);
 
-    let colliders = collect_transforms(scene, &entities[1], "Collider", "ColliderShapeAsset");
-    let rigid_bodies = collect_transforms(scene, &entities[2], "RigidBody", "RigidBodyShapeAsset");
+    let colliders = collect_transforms(scene, &entities[1], "Collider");
+    let rigid_bodies = collect_transforms(scene, &entities[2], "RigidBody");
 
     ensure_physics_world(scene);
 
@@ -107,6 +110,7 @@ impl PhysicsWorld {
                 ),
                 model: transform.model.clone(),
                 scale: transform.scale,
+                convex_decomposition: transform.convex_decomposition,
             },
             |world, tracked| {
                 let _ = world.remove_collider(tracked.handle);
@@ -116,10 +120,14 @@ impl PhysicsWorld {
                     collider.set_position(pose_from_transform(transform));
 
                     // Rescaling a shape is expensive, only do it when the shape changed
-                    if tracked.model != transform.model || tracked.scale != transform.scale {
+                    if tracked.model != transform.model
+                        || tracked.scale != transform.scale
+                        || tracked.convex_decomposition != transform.convex_decomposition
+                    {
                         collider.set_shape(scaled_shape(transform));
                         tracked.model = transform.model.clone();
                         tracked.scale = transform.scale;
+                        tracked.convex_decomposition = transform.convex_decomposition;
                     }
                 }
             },
@@ -142,6 +150,7 @@ impl PhysicsWorld {
                     collider,
                     model: transform.model.clone(),
                     scale: transform.scale,
+                    convex_decomposition: transform.convex_decomposition,
                 }
             },
             |world, tracked| {
@@ -155,12 +164,16 @@ impl PhysicsWorld {
                 }
 
                 // Rescaling a shape is expensive, only do it when the shape changed
-                if tracked.model != transform.model || tracked.scale != transform.scale {
+                if tracked.model != transform.model
+                    || tracked.scale != transform.scale
+                    || tracked.convex_decomposition != transform.convex_decomposition
+                {
                     if let Some(collider) = world.colliders.get_mut(tracked.collider) {
                         collider.set_shape(scaled_shape(transform));
                     }
                     tracked.model = transform.model.clone();
                     tracked.scale = transform.scale;
+                    tracked.convex_decomposition = transform.convex_decomposition;
                 }
             },
         );
@@ -184,12 +197,7 @@ impl PhysicsWorld {
     }
 }
 
-fn collect_transforms(
-    scene: &mut Scene,
-    entities: &[Uuid],
-    component: &str,
-    shape_asset: &str,
-) -> Vec<TransformData> {
+fn collect_transforms(scene: &mut Scene, entities: &[Uuid], component: &str) -> Vec<TransformData> {
     entities
         .iter()
         .filter_map(|entity| {
@@ -205,13 +213,19 @@ fn collect_transforms(
 
             // The shape size and model live on the collider/rigidbody component, not the
             // Transform.
-            let Ok((scale, model)) =
-                scene.query::<(&[f32; 3], &String)>(*entity, component, &["scale", "model"])
+            let Ok((scale, model, convex_decomposition)) = scene
+                .query::<(&[f32; 3], &String, &bool)>(
+                    *entity,
+                    component,
+                    &["scale", "model", "convex_decomposition"],
+                )
             else {
                 return None;
             };
             let scale = *scale;
             let model = model.clone();
+            let convex_decomposition = *convex_decomposition;
+            let shape_asset = shape_asset_name(convex_decomposition);
 
             if model.is_empty() || scene.ensure_asset_loaded(shape_asset, &model).is_err() {
                 return None;
@@ -230,10 +244,19 @@ fn collect_transforms(
                 rotation,
                 scale,
                 model,
+                convex_decomposition,
                 shape,
             })
         })
         .collect()
+}
+
+fn shape_asset_name(convex_decomposition: bool) -> &'static str {
+    if convex_decomposition {
+        "ConvexPhysicsShapeAsset"
+    } else {
+        "PhysicsShapeAsset"
+    }
 }
 
 fn pose_from_transform(transform: &TransformData) -> Pose {
