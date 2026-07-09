@@ -4,12 +4,12 @@ use wasserxr::{asset_type, asset_type_creator, scene::Scene};
 use crate::model_asset::RawMesh;
 
 #[asset_type]
-struct ColliderShapeAsset {
+struct PhysicsShapeAsset {
     shape: SharedShape,
 }
 
-#[asset_type_creator(ColliderShapeAsset)]
-fn create_collider_shape_asset(scene: &mut Scene, data: &str) -> Option<ColliderShapeAsset> {
+#[asset_type_creator(PhysicsShapeAsset)]
+fn create_physics_shape_asset(scene: &mut Scene, data: &str) -> Option<PhysicsShapeAsset> {
     let shape = match primitive_shape(data) {
         Some(primitive) => primitive,
         None => {
@@ -18,16 +18,19 @@ fn create_collider_shape_asset(scene: &mut Scene, data: &str) -> Option<Collider
         }
     };
 
-    Some(ColliderShapeAsset { shape })
+    Some(PhysicsShapeAsset { shape })
 }
 
 #[asset_type]
-struct RigidBodyShapeAsset {
+struct ConvexPhysicsShapeAsset {
     shape: SharedShape,
 }
 
-#[asset_type_creator(RigidBodyShapeAsset)]
-fn create_rigid_body_shape_asset(scene: &mut Scene, data: &str) -> Option<RigidBodyShapeAsset> {
+#[asset_type_creator(ConvexPhysicsShapeAsset)]
+fn create_convex_physics_shape_asset(
+    scene: &mut Scene,
+    data: &str,
+) -> Option<ConvexPhysicsShapeAsset> {
     let shape = match primitive_shape(data) {
         Some(primitive) => primitive,
         None => {
@@ -36,7 +39,7 @@ fn create_rigid_body_shape_asset(scene: &mut Scene, data: &str) -> Option<RigidB
         }
     };
 
-    Some(RigidBodyShapeAsset { shape })
+    Some(ConvexPhysicsShapeAsset { shape })
 }
 
 // Data strings matching a rapier primitive name resolve to a unit-sized primitive

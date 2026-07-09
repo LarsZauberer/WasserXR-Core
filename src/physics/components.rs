@@ -7,6 +7,9 @@ struct Collider {
 
     #[mutable]
     model: String,
+
+    #[mutable]
+    convex_decomposition: bool,
 }
 
 impl Default for Collider {
@@ -14,6 +17,7 @@ impl Default for Collider {
         Self {
             scale: [1.0, 1.0, 1.0],
             model: "cuboid".to_owned(),
+            convex_decomposition: false,
         }
     }
 }
@@ -30,6 +34,9 @@ struct RigidBody {
 
     #[mutable]
     model: String,
+
+    #[mutable]
+    convex_decomposition: bool,
 }
 
 impl Default for RigidBody {
@@ -37,6 +44,7 @@ impl Default for RigidBody {
         Self {
             scale: [1.0, 1.0, 1.0],
             model: "cuboid".to_owned(),
+            convex_decomposition: false,
         }
     }
 }
