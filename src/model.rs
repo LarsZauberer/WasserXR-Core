@@ -14,6 +14,6 @@ struct Model {
 fn create_model(_scene: &mut Scene) -> Option<Model> {
     Some(Model {
         model: "".to_owned(),
-        material: "./materials/base.json".to_owned(),
+        material: "./assets/materials/base.json".to_owned(),
     })
 }

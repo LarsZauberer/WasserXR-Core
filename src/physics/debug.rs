@@ -116,7 +116,7 @@ fn update_debug_entity(
     };
     let scale = *scale;
     let model = if is_primitive(model) {
-        format!("./models/{model}.obj")
+        format!("./assets/models/{model}.obj")
     } else {
         model.clone()
     };
