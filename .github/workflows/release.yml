@@ -58,6 +58,10 @@ jobs:
           test -n "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Zip the Materials
+        run: |
+          tar czf assets.tar.gz assets
+
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -66,3 +70,4 @@ jobs:
           files: |
             target/release/libwasserxr_core.a
             target/release/libwasserxr_core.so
+            assets.tar.gz
