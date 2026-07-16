@@ -98,7 +98,7 @@ struct StdoutRedirector {
     original_stdout: RawFd,
     /// Output (read) end of the capture pipe; kept non-blocking.
     read_fd: RawFd,
-    /// Input (write) end of the capture pipe, installed as fd 1.
+    /// Input (write) end of the capture pipe, installed as fd 1; kept non-blocking.
     write_fd: RawFd,
 }
 
@@ -111,11 +111,16 @@ impl StdoutRedirector {
         unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         let [read_fd, write_fd] = pipe_fds;
 
-        // Draining runs on the console tick and must never block, so the read end
-        // returns immediately when the pipe is empty.
+        // Both ends are non-blocking: the read end so draining never blocks when the
+        // pipe is empty, and the write end (fd 1) so a full pipe drops output instead
+        // of blocking the writer. The console drains only once per tick, so a
+        // blocking write end would let any system that emits more than the pipe
+        // buffer between ticks stall the whole engine thread.
         unsafe {
-            let flags = libc::fcntl(read_fd, libc::F_GETFL);
-            libc::fcntl(read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            let read_flags = libc::fcntl(read_fd, libc::F_GETFL);
+            libc::fcntl(read_fd, libc::F_SETFL, read_flags | libc::O_NONBLOCK);
+            let write_flags = libc::fcntl(write_fd, libc::F_GETFL);
+            libc::fcntl(write_fd, libc::F_SETFL, write_flags | libc::O_NONBLOCK);
         }
 
         unsafe { libc::dup2(write_fd, libc::STDOUT_FILENO) };
