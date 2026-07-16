@@ -1,14 +1,14 @@
 use std::{
     cell::RefCell,
     fs::File,
-    io::Read,
-    os::fd::{AsRawFd, FromRawFd, RawFd},
+    io::{self, Read},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
 };
 
 use crossterm::{
     event::KeyCode,
     execute,
-    terminal::{EnterAlternateScreen, enable_raw_mode},
+    terminal::{EnterAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Frame, Terminal,
@@ -41,21 +41,36 @@ struct ConsoleResource {
 }
 
 impl ConsoleResource {
-    fn new() -> Self {
+    fn new() -> io::Result<Self> {
         // ratatui normally draws to fd 1, but `StdoutRedirector` replaces fd 1 with
         // a pipe so raw writes (e.g. `printf` from C plugins) can't corrupt the TUI.
         // Enter the alternate screen while fd 1 is still the real terminal, then
         // duplicate it so the console keeps rendering there after the redirect.
-        let _ = enable_raw_mode();
-        let _ = execute!(std::io::stdout(), EnterAlternateScreen);
-        let console_out = unsafe { File::from_raw_fd(libc::dup(libc::STDOUT_FILENO)) };
-        let terminal = Terminal::new(CrosstermBackend::new(console_out))
-            .expect("failed to create console terminal");
+        enable_raw_mode()?;
+        if let Err(error) = execute!(std::io::stdout(), EnterAlternateScreen) {
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
 
-        Self {
-            terminal,
-            state: Screen::default(),
-            stdout_redirector: StdoutRedirector::new(),
+        let build = || -> io::Result<Self> {
+            let console_out = dup_stdout()?;
+            let terminal = Terminal::new(CrosstermBackend::new(File::from(console_out)))?;
+            Ok(Self {
+                terminal,
+                state: Screen::default(),
+                stdout_redirector: StdoutRedirector::new()?,
+            })
+        };
+
+        match build() {
+            Ok(console) => Ok(console),
+            Err(error) => {
+                // Undo the raw mode and alternate screen entered above. fd 1 is still
+                // the real terminal because StdoutRedirector applies its redirect last
+                // and rolls it back on failure.
+                ratatui::restore();
+                Err(error)
+            }
         }
     }
 
@@ -85,7 +100,12 @@ impl Drop for ConsoleResource {
         // leaving the alternate screen; otherwise ratatui's restore sequence would
         // go into the pipe and leave the terminal stuck. `StdoutRedirector::drop`
         // restores fd 1 again afterwards and closes the saved descriptors.
-        unsafe { libc::dup2(self.stdout_redirector.original_stdout, libc::STDOUT_FILENO) };
+        unsafe {
+            libc::dup2(
+                self.stdout_redirector.original_stdout.as_raw_fd(),
+                libc::STDOUT_FILENO,
+            )
+        };
         ratatui::restore();
     }
 }
@@ -95,41 +115,47 @@ impl Drop for ConsoleResource {
 /// drains that pipe into the scene log on every console tick.
 struct StdoutRedirector {
     /// Duplicate of the original `stdout`, put back on fd 1 when dropped.
-    original_stdout: RawFd,
-    /// Output (read) end of the capture pipe; kept non-blocking.
-    read_fd: RawFd,
-    /// Input (write) end of the capture pipe, installed as fd 1; kept non-blocking.
-    write_fd: RawFd,
+    original_stdout: OwnedFd,
+    /// Output (read) end of the capture pipe; kept non-blocking. The input (write)
+    /// end lives on as fd 1, which is restored (and thereby closed) on drop.
+    read_fd: OwnedFd,
 }
 
 impl StdoutRedirector {
-    fn new() -> Self {
-        // Save the real stdout, then splice the pipe's write end onto fd 1.
-        let original_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    fn new() -> io::Result<Self> {
+        // Save the real stdout so it can be put back on drop.
+        let original_stdout = dup_stdout()?;
 
+        // Create the capture pipe.
         let mut pipe_fds = [0 as RawFd; 2];
-        unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
-        let [read_fd, write_fd] = pipe_fds;
+        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `pipe` succeeded, so both descriptors are freshly opened and owned.
+        let read_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+        let write_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
 
         // Both ends are non-blocking: the read end so draining never blocks when the
         // pipe is empty, and the write end (fd 1) so a full pipe drops output instead
         // of blocking the writer. The console drains only once per tick, so a
         // blocking write end would let any system that emits more than the pipe
         // buffer between ticks stall the whole engine thread.
-        unsafe {
-            let read_flags = libc::fcntl(read_fd, libc::F_GETFL);
-            libc::fcntl(read_fd, libc::F_SETFL, read_flags | libc::O_NONBLOCK);
-            let write_flags = libc::fcntl(write_fd, libc::F_GETFL);
-            libc::fcntl(write_fd, libc::F_SETFL, write_flags | libc::O_NONBLOCK);
+        set_nonblocking(read_fd.as_raw_fd())?;
+        set_nonblocking(write_fd.as_raw_fd())?;
+
+        // Splice the pipe's write end onto fd 1 last: on any earlier failure the
+        // owned descriptors above close and fd 1 is left untouched. fd 1 shares the
+        // write end's (non-blocking) file description, so `write_fd` is now redundant
+        // and dropped, leaving fd 1 as the sole owner of the pipe's write side.
+        if unsafe { libc::dup2(write_fd.as_raw_fd(), libc::STDOUT_FILENO) } < 0 {
+            return Err(io::Error::last_os_error());
         }
+        drop(write_fd);
 
-        unsafe { libc::dup2(write_fd, libc::STDOUT_FILENO) };
-
-        Self {
+        Ok(Self {
             original_stdout,
             read_fd,
-            write_fd,
-        }
+        })
     }
 
     /// Reads everything currently buffered in the pipe's output end and appends it
@@ -143,8 +169,13 @@ impl StdoutRedirector {
         let mut output = Vec::new();
         let mut buffer = [0u8; 4096];
         loop {
-            let count =
-                unsafe { libc::read(self.read_fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+            let count = unsafe {
+                libc::read(
+                    self.read_fd.as_raw_fd(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                )
+            };
             if count <= 0 {
                 break;
             }
@@ -162,14 +193,31 @@ impl StdoutRedirector {
 
 impl Drop for StdoutRedirector {
     fn drop(&mut self) {
-        // Put the real stdout back on fd 1 and close the pipe.
-        unsafe {
-            libc::dup2(self.original_stdout, libc::STDOUT_FILENO);
-            libc::close(self.original_stdout);
-            libc::close(self.read_fd);
-            libc::close(self.write_fd);
-        }
+        // Put the real stdout back on fd 1; the owned pipe descriptors close on drop.
+        unsafe { libc::dup2(self.original_stdout.as_raw_fd(), libc::STDOUT_FILENO) };
     }
+}
+
+/// Duplicates the current `stdout` (fd 1) into a new owned descriptor.
+fn dup_stdout() -> io::Result<OwnedFd> {
+    let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `dup` returned a valid, freshly owned descriptor.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Marks a descriptor non-blocking so reads and writes return instead of blocking.
+fn set_nonblocking(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -530,11 +578,9 @@ fn ensure_console(scene: &mut Scene) {
     if scene
         .get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE)
         .is_err()
+        && let Ok(console) = ConsoleResource::new()
     {
-        let _ = scene.add_resource(
-            CONSOLE_RESOURCE.to_owned(),
-            RefCell::new(ConsoleResource::new()),
-        );
+        let _ = scene.add_resource(CONSOLE_RESOURCE.to_owned(), RefCell::new(console));
     }
 }
 
