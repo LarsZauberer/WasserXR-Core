@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Write},
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     sync::{
         Once,
@@ -101,6 +101,10 @@ impl ConsoleResource {
 
 impl Drop for ConsoleResource {
     fn drop(&mut self) {
+        // Capture whatever is still buffered in the redirected stdout while fd 1 is
+        // still the pipe, so the final bytes aren't lost when the redirect ends.
+        let pending = self.stdout_redirector.drain();
+
         // fd 1 points at the capture pipe now, so put the real stdout back before
         // leaving the alternate screen; otherwise ratatui's restore sequence would
         // go into the pipe and leave the terminal stuck. `StdoutRedirector::drop`
@@ -112,6 +116,12 @@ impl Drop for ConsoleResource {
             )
         };
         ratatui::restore();
+
+        // The real terminal is back; surface the final captured output there rather
+        // than discarding it.
+        if let Some(message) = pending {
+            println!("{message}");
+        }
     }
 }
 
@@ -172,6 +182,10 @@ impl StdoutRedirector {
         set_nonblocking(read_fd.as_raw_fd())?;
         set_nonblocking(write_fd.as_raw_fd())?;
 
+        // Flush any bytes still buffered for the real terminal before the pipe takes
+        // over fd 1, otherwise they would be captured into the log instead.
+        flush_stdio();
+
         // Splice the pipe's write end onto fd 1 last: on any earlier failure the
         // owned descriptors above close and fd 1 is left untouched. fd 1 shares the
         // write end's (non-blocking) file description, so `write_fd` is now redundant
@@ -198,6 +212,19 @@ impl StdoutRedirector {
     /// land here instead of on the terminal; this surfaces them in the log rather
     /// than losing them.
     fn write_stdout_to_log(&self, scene: &Scene) {
+        if let Some(message) = self.drain() {
+            scene.log(LogLevel::DEBUG, message);
+        }
+    }
+
+    /// Flushes stdio and reads everything buffered in the pipe, returning it as a log
+    /// message (trailing newline trimmed) or `None` when nothing was captured.
+    fn drain(&self) -> Option<String> {
+        // Push libc's and Rust's stdout buffers into the pipe first: output to a pipe
+        // is fully buffered, so unflushed `printf` bytes would otherwise sit in the
+        // FILE* buffer and never reach us (and later corrupt the restored terminal).
+        flush_stdio();
+
         let mut output = Vec::new();
         let mut buffer = [0u8; 4096];
         loop {
@@ -215,11 +242,10 @@ impl StdoutRedirector {
         }
 
         if output.is_empty() {
-            return;
+            return None;
         }
 
-        let message = String::from_utf8_lossy(&output);
-        scene.log(LogLevel::DEBUG, message.trim_end().to_owned());
+        Some(String::from_utf8_lossy(&output).trim_end().to_owned())
     }
 }
 
@@ -230,6 +256,14 @@ impl Drop for StdoutRedirector {
         // Put the real stdout back on fd 1; the owned pipe descriptors close on drop.
         unsafe { libc::dup2(self.original_stdout.as_raw_fd(), libc::STDOUT_FILENO) };
     }
+}
+
+/// Flushes libc's and Rust's stdout buffers so buffered writes reach the
+/// underlying fd instead of lingering in `FILE*`/`BufWriter` buffers.
+fn flush_stdio() {
+    // `fflush(NULL)` flushes every open C stdio output stream.
+    unsafe { libc::fflush(std::ptr::null_mut()) };
+    let _ = io::stdout().flush();
 }
 
 /// Duplicates the current `stdout` (fd 1) into a new owned descriptor.
