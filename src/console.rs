@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, ListState, Paragraph, Wrap},
 };
 use wasserxr::{
-    Uuid, attacher,
+    Uuid,
     error::{ComponentError, PluginError, SceneError},
     scene::{
         Scene,
