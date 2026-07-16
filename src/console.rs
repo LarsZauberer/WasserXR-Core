@@ -3,12 +3,16 @@ use std::{
     fs::File,
     io::{self, Read},
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    sync::{
+        Once,
+        atomic::{AtomicI32, Ordering},
+    },
 };
 
 use crossterm::{
     event::KeyCode,
     execute,
-    terminal::{EnterAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Frame, Terminal,
@@ -46,6 +50,7 @@ impl ConsoleResource {
         // a pipe so raw writes (e.g. `printf` from C plugins) can't corrupt the TUI.
         // Enter the alternate screen while fd 1 is still the real terminal, then
         // duplicate it so the console keeps rendering there after the redirect.
+        install_panic_hook();
         enable_raw_mode()?;
         if let Err(error) = execute!(std::io::stdout(), EnterAlternateScreen) {
             let _ = disable_raw_mode();
@@ -110,6 +115,30 @@ impl Drop for ConsoleResource {
     }
 }
 
+/// Raw fd of the saved real stdout while the redirect is in place, or `-1`. The
+/// panic hook reads it to move fd 1 back onto the real terminal before restoring
+/// it, since during operation fd 1 points at the capture pipe.
+static SAVED_STDOUT: AtomicI32 = AtomicI32::new(-1);
+
+/// Installs, once, a panic hook that restores the terminal before the previous hook
+/// runs — the equivalent of the hook `ratatui::init` used to set up, but also aware
+/// that fd 1 may currently be redirected into the capture pipe.
+fn install_panic_hook() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let saved = SAVED_STDOUT.load(Ordering::SeqCst);
+            if saved >= 0 {
+                unsafe { libc::dup2(saved, libc::STDOUT_FILENO) };
+            }
+            let _ = disable_raw_mode();
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+            previous(info);
+        }));
+    });
+}
+
 /// Redirects the process `stdout` into a pipe while the console is active so raw
 /// writes (like `printf` from C plugins) can't corrupt the ratatui rendering, and
 /// drains that pipe into the scene log on every console tick.
@@ -152,6 +181,9 @@ impl StdoutRedirector {
         }
         drop(write_fd);
 
+        // Let the panic hook find the real stdout while the redirect is in place.
+        SAVED_STDOUT.store(original_stdout.as_raw_fd(), Ordering::SeqCst);
+
         Ok(Self {
             original_stdout,
             read_fd,
@@ -193,6 +225,8 @@ impl StdoutRedirector {
 
 impl Drop for StdoutRedirector {
     fn drop(&mut self) {
+        // The saved fd is about to close, so stop the panic hook from using it.
+        SAVED_STDOUT.store(-1, Ordering::SeqCst);
         // Put the real stdout back on fd 1; the owned pipe descriptors close on drop.
         unsafe { libc::dup2(self.original_stdout.as_raw_fd(), libc::STDOUT_FILENO) };
     }
