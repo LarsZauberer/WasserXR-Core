@@ -23,16 +23,17 @@ use wasserxr::{
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 const LOG_TABS: [&str; 4] = ["DEBUG", "INFO", "WARN", "ERROR"];
 const CONSOLE_RESOURCE: &str = "console_data";
-const STATE_RESOURCE: &str = "console_state";
 
 struct ConsoleResource {
     terminal: DefaultTerminal,
+    state: Screen,
 }
 
 impl ConsoleResource {
     fn new() -> Self {
         Self {
             terminal: ratatui::init(),
+            state: Screen::default(),
         }
     }
 
@@ -381,53 +382,45 @@ impl Default for Screen {
 
 #[system]
 fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
-    let mut state = scene
-        .get_resource::<Screen>(STATE_RESOURCE)
-        .cloned()
-        .unwrap_or_default();
+    ensure_console(scene);
+
+    let (mut state, area) = {
+        let Ok(console) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) else {
+            return;
+        };
+        let console = console.borrow();
+        (console.state.clone(), console.area())
+    };
 
     if let Some(key) = get_input() {
-        let area = scene
-            .get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE)
-            .map(|terminal| terminal.borrow().area())
-            .unwrap_or_default();
         state = transition(scene, key, ConsoleInputContext::new(area), state);
     }
 
-    set_resource(scene, STATE_RESOURCE, state.clone());
-
-    let Ok(terminal) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) else {
+    let Ok(console) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) else {
         return;
     };
 
-    terminal.borrow_mut().draw(|frame| {
+    let mut console = console.borrow_mut();
+    console.state = state.clone();
+    console.draw(|frame| {
         draw(frame, scene, state.clone());
     });
 }
 
 #[attacher(console)]
 fn console_attacher(scene: &mut Scene) {
-    create_resource(scene, STATE_RESOURCE, Screen::default);
-    create_resource(scene, CONSOLE_RESOURCE, || {
-        RefCell::new(ConsoleResource::new())
-    });
+    ensure_console(scene);
 }
 
-fn create_resource<T>(scene: &mut Scene, name: &str, func: fn() -> T) {
-    match scene.get_mut_resource::<T>(name) {
-        Ok(_) => {}
-        Err(_) => {
-            let _ = scene.add_resource(name.to_owned(), func());
-        }
-    }
-}
-
-fn set_resource<T>(scene: &mut Scene, name: &str, value: T) {
-    match scene.get_mut_resource::<T>(name) {
-        Ok(resource) => *resource = value,
-        Err(_) => {
-            let _ = scene.add_resource(name.to_owned(), value);
-        }
+fn ensure_console(scene: &mut Scene) {
+    if scene
+        .get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE)
+        .is_err()
+    {
+        let _ = scene.add_resource(
+            CONSOLE_RESOURCE.to_owned(),
+            RefCell::new(ConsoleResource::new()),
+        );
     }
 }
 
