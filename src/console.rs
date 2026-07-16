@@ -616,7 +616,10 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     // Surface any raw writes pushed into the redirected stdout since the last tick
     // as a DEBUG log entry before drawing.
     if let Ok(console) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) {
-        console.borrow().stdout_redirector.write_stdout_to_log(scene);
+        console
+            .borrow()
+            .stdout_redirector
+            .write_stdout_to_log(scene);
     }
 
     let (mut state, area) = {
