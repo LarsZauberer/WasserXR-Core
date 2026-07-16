@@ -847,7 +847,7 @@ fn transition(
                 follow: true,
             },
             KeyCode::Down | KeyCode::Char('j') => {
-                let log_count = log_display_lines(scene, level, context.log_area_width).len();
+                let log_count = log_display_line_count(scene, level, context.log_area_width);
                 let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
                     max_scroll
@@ -861,7 +861,7 @@ fn transition(
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let log_count = log_display_lines(scene, level, context.log_area_width).len();
+                let log_count = log_display_line_count(scene, level, context.log_area_width);
                 let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
                     max_scroll
@@ -1144,17 +1144,22 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
     let (level_area, log_area) = split_header_content(content_area);
     build_log_tab_header(frame, level_area, log_level_index(level), follow);
 
-    let mut lines = log_display_lines(scene, level, log_area.width);
-
+    let total = log_display_line_count(scene, level, log_area.width);
     let visible_start = if follow {
-        max_log_scroll(lines.len(), log_area.height)
+        max_log_scroll(total, log_area.height)
     } else {
-        clamp_log_scroll(scroll, lines.len(), log_area.height)
+        clamp_log_scroll(scroll, total, log_area.height)
     };
-    // Slice with the usize offset instead of casting to Paragraph's u16 scroll: wrapping can push the
-    // display-line count past u16::MAX, where the cast would wrap around to the wrong section (or
-    // overflow ratatui's `area.height + scroll.y` and panic in debug builds).
-    let visible = lines.split_off(visible_start.min(lines.len()));
+    // Build only the visible window (indexed by usize, never cast to Paragraph's u16 scroll): one
+    // giant entry can no longer allocate a line per wrapped row every frame, and a display-line
+    // count past u16::MAX can no longer wrap around or overflow ratatui's scroll arithmetic.
+    let visible = log_display_lines_range(
+        scene,
+        level,
+        log_area.width,
+        visible_start,
+        log_area.height as usize,
+    );
     frame.render_widget(Paragraph::new(visible), log_area);
     draw_keymap_hint(
         frame,
@@ -1170,21 +1175,56 @@ fn filtered_logs(scene: &Scene, level: LogLevel) -> Vec<LogEntry> {
         .collect()
 }
 
-/// Formats every visible log entry into wrapped display lines. `\n` in a message starts a new line
-/// and any segment wider than `width` wraps, so long entries stay fully readable. The scroll logic
-/// counts these lines, so draw and input must agree on this list.
-fn log_display_lines(scene: &Scene, level: LogLevel, width: u16) -> Vec<Line<'static>> {
-    let width = (width as usize).max(1);
-    let mut lines = Vec::new();
+/// Walks the display lines of every visible log entry, calling `emit(line, color)` once per line.
+/// `\n` starts a new line and long lines wrap (see [`for_each_wrapped_line`]). Counting and building
+/// both go through here, so scroll bounds and rendering can never disagree. A zero-width area yields
+/// nothing, so an off-screen giant entry cannot explode into one line per character.
+fn for_each_log_line(
+    scene: &Scene,
+    level: LogLevel,
+    width: u16,
+    mut emit: impl FnMut(&str, Color),
+) {
+    if width == 0 {
+        return;
+    }
+    let width = width as usize;
     for entry in filtered_logs(scene, level) {
         let color = log_color(entry.get_level());
         let text = format!("{entry}");
         for segment in text.split('\n') {
             for_each_wrapped_line(segment.trim_end_matches('\r'), width, |line| {
-                lines.push(Line::from(Span::styled(line.to_owned(), color)));
+                emit(line, color)
             });
         }
     }
+}
+
+/// Counts the wrapped display lines without allocating any of them, so the scroll math the input
+/// handler runs every tick stays cheap regardless of how much has been logged.
+fn log_display_line_count(scene: &Scene, level: LogLevel, width: u16) -> usize {
+    let mut count = 0;
+    for_each_log_line(scene, level, width, |_, _| count += 1);
+    count
+}
+
+/// Builds only the display lines in `start..start + limit`, so a single huge or very long entry
+/// never materializes more than the screenful actually rendered this frame.
+fn log_display_lines_range(
+    scene: &Scene,
+    level: LogLevel,
+    width: u16,
+    start: usize,
+    limit: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut index = 0;
+    for_each_log_line(scene, level, width, |line, color| {
+        if index >= start && lines.len() < limit {
+            lines.push(Line::from(Span::styled(line.to_owned(), color)));
+        }
+        index += 1;
+    });
     lines
 }
 
