@@ -1171,31 +1171,42 @@ fn filtered_logs(scene: &Scene, level: LogLevel) -> Vec<LogEntry> {
 /// and any segment wider than `width` wraps, so long entries stay fully readable. The scroll logic
 /// counts these lines, so draw and input must agree on this list.
 fn log_display_lines(scene: &Scene, level: LogLevel, width: u16) -> Vec<Line<'static>> {
-    filtered_logs(scene, level)
-        .iter()
-        .flat_map(|entry| {
-            let color = log_color(entry.get_level());
-            wrap_log_text(&format!("{entry}"), width as usize)
-                .into_iter()
-                .map(move |line| Line::from(Span::styled(line, color)))
-        })
-        .collect()
-}
-
-fn wrap_log_text(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
+    let width = (width as usize).max(1);
     let mut lines = Vec::new();
-    for segment in text.split('\n') {
-        let chars: Vec<char> = segment.trim_end_matches('\r').chars().collect();
-        if chars.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-        for chunk in chars.chunks(width) {
-            lines.push(chunk.iter().collect());
+    for entry in filtered_logs(scene, level) {
+        let color = log_color(entry.get_level());
+        let text = format!("{entry}");
+        for segment in text.split('\n') {
+            for_each_wrapped_line(segment.trim_end_matches('\r'), width, |line| {
+                lines.push(Line::from(Span::styled(line.to_owned(), color)));
+            });
         }
     }
     lines
+}
+
+/// Wraps one `\n`-free segment into display lines of at most `width` terminal columns, calling
+/// `emit` once per line. Wrapping is measured in grapheme display width (via ratatui's own grapheme
+/// splitting and width tables), so wide glyphs, combining marks and joined emoji are never split
+/// apart or clipped the way a plain `char` count would.
+fn for_each_wrapped_line(segment: &str, width: usize, mut emit: impl FnMut(&str)) {
+    let span = Span::raw(segment);
+    let mut line_start = 0;
+    let mut cursor = 0;
+    let mut line_width = 0;
+    for grapheme in span.styled_graphemes(Color::Reset) {
+        let grapheme_width = Span::raw(grapheme.symbol).width();
+        // Break before a grapheme that would overflow, but never on an empty line: a single glyph
+        // wider than the area still gets its own line instead of looping forever.
+        if cursor > line_start && line_width + grapheme_width > width {
+            emit(&segment[line_start..cursor]);
+            line_start = cursor;
+            line_width = 0;
+        }
+        line_width += grapheme_width;
+        cursor += grapheme.symbol.len();
+    }
+    emit(&segment[line_start..]);
 }
 
 fn log_level_add(level: LogLevel) -> LogLevel {
