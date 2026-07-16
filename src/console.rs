@@ -92,17 +92,21 @@ enum Screen {
 // design pattern
 struct ConsoleInputContext {
     visible_log_lines: u16,
+    log_area_width: u16,
 }
 
 impl ConsoleInputContext {
     fn new(area: Rect) -> Self {
+        // Scrolling counts wrapped display lines, so transition needs both the page height (its
+        // scroll bound) and the width the log wraps at.
+        let log_area = if can_draw_console(area) {
+            log_area_rect(area)
+        } else {
+            Rect::default()
+        };
         Self {
-            // Log scrolling stops at the last visible page, so transition needs this bound.
-            visible_log_lines: if can_draw_console(area) {
-                log_area_height(area)
-            } else {
-                0
-            },
+            visible_log_lines: log_area.height,
+            log_area_width: log_area.width,
         }
     }
 }
@@ -843,7 +847,7 @@ fn transition(
                 follow: true,
             },
             KeyCode::Down | KeyCode::Char('j') => {
-                let log_count = filtered_logs(scene, level).len();
+                let log_count = log_display_lines(scene, level, context.log_area_width).len();
                 let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
                     max_scroll
@@ -857,7 +861,7 @@ fn transition(
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let log_count = filtered_logs(scene, level).len();
+                let log_count = log_display_lines(scene, level, context.log_area_width).len();
                 let max_scroll = max_log_scroll(log_count, context.visible_log_lines);
                 let scroll = if follow {
                     max_scroll
@@ -946,12 +950,12 @@ fn index_sub_with_loop(index: usize, len: usize) -> usize {
     }
 }
 
-fn log_area_height(area: Rect) -> u16 {
+fn log_area_rect(area: Rect) -> Rect {
     let main_area = Block::bordered().inner(area);
     let (_, content_area, _) = split_header_content_footer(main_area);
     let (_, log_area) = split_header_content(content_area);
 
-    log_area.height
+    log_area
 }
 
 fn max_log_scroll(log_count: usize, visible_lines: u16) -> usize {
@@ -1140,16 +1144,7 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
     let (level_area, log_area) = split_header_content(content_area);
     build_log_tab_header(frame, level_area, log_level_index(level), follow);
 
-    let logs = filtered_logs(scene, level);
-    let lines: Vec<Line> = logs
-        .iter()
-        .map(|entry| {
-            Line::from(Span::styled(
-                format!("{entry}"),
-                log_color(entry.get_level()),
-            ))
-        })
-        .collect();
+    let lines = log_display_lines(scene, level, log_area.width);
 
     let visible_start = if follow {
         max_log_scroll(lines.len(), log_area.height)
@@ -1170,6 +1165,37 @@ fn filtered_logs(scene: &Scene, level: LogLevel) -> Vec<LogEntry> {
         .iter_logs()
         .filter(|entry| log_level_index(entry.get_level()) >= log_level_index(level))
         .collect()
+}
+
+/// Formats every visible log entry into wrapped display lines. `\n` in a message starts a new line
+/// and any segment wider than `width` wraps, so long entries stay fully readable. The scroll logic
+/// counts these lines, so draw and input must agree on this list.
+fn log_display_lines(scene: &Scene, level: LogLevel, width: u16) -> Vec<Line<'static>> {
+    filtered_logs(scene, level)
+        .iter()
+        .flat_map(|entry| {
+            let color = log_color(entry.get_level());
+            wrap_log_text(&format!("{entry}"), width as usize)
+                .into_iter()
+                .map(move |line| Line::from(Span::styled(line, color)))
+        })
+        .collect()
+}
+
+fn wrap_log_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    for segment in text.split('\n') {
+        let chars: Vec<char> = segment.trim_end_matches('\r').chars().collect();
+        if chars.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        for chunk in chars.chunks(width) {
+            lines.push(chunk.iter().collect());
+        }
+    }
+    lines
 }
 
 fn log_level_add(level: LogLevel) -> LogLevel {
