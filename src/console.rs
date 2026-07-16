@@ -22,14 +22,14 @@ use wasserxr::{
 
 const TABS: [&str; 4] = ["Entities", "Plugins", "Systems", "Log"];
 const LOG_TABS: [&str; 4] = ["DEBUG", "INFO", "WARN", "ERROR"];
-const TERMINAL_RESOURCE: &str = "console_terminal";
+const CONSOLE_RESOURCE: &str = "console_data";
 const STATE_RESOURCE: &str = "console_state";
 
-struct ConsoleTerminal {
+struct ConsoleResource {
     terminal: DefaultTerminal,
 }
 
-impl ConsoleTerminal {
+impl ConsoleResource {
     fn new() -> Self {
         Self {
             terminal: ratatui::init(),
@@ -56,7 +56,7 @@ impl ConsoleTerminal {
     }
 }
 
-impl Drop for ConsoleTerminal {
+impl Drop for ConsoleResource {
     fn drop(&mut self) {
         ratatui::restore();
     }
@@ -388,7 +388,7 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 
     if let Some(key) = get_input() {
         let area = scene
-            .get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE)
+            .get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE)
             .map(|terminal| terminal.borrow().area())
             .unwrap_or_default();
         state = transition(scene, key, ConsoleInputContext::new(area), state);
@@ -396,7 +396,7 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 
     set_resource(scene, STATE_RESOURCE, state.clone());
 
-    let Ok(terminal) = scene.get_resource::<RefCell<ConsoleTerminal>>(TERMINAL_RESOURCE) else {
+    let Ok(terminal) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) else {
         return;
     };
 
@@ -408,8 +408,8 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 #[attacher(console)]
 fn console_attacher(scene: &mut Scene) {
     create_resource(scene, STATE_RESOURCE, Screen::default);
-    create_resource(scene, TERMINAL_RESOURCE, || {
-        RefCell::new(ConsoleTerminal::new())
+    create_resource(scene, CONSOLE_RESOURCE, || {
+        RefCell::new(ConsoleResource::new())
     });
 }
 
