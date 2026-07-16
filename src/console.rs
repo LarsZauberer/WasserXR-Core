@@ -407,11 +407,6 @@ fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     });
 }
 
-#[attacher(console)]
-fn console_attacher(scene: &mut Scene) {
-    ensure_console(scene);
-}
-
 fn ensure_console(scene: &mut Scene) {
     if scene
         .get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE)
