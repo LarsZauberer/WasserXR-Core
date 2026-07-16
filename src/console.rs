@@ -1,8 +1,18 @@
-use std::{cell::RefCell, io::Read, os::fd::AsRawFd};
+use std::{
+    cell::RefCell,
+    fs::File,
+    io::Read,
+    os::fd::{AsRawFd, FromRawFd, RawFd},
+};
 
-use crossterm::event::KeyCode;
+use crossterm::{
+    event::KeyCode,
+    execute,
+    terminal::{EnterAlternateScreen, enable_raw_mode},
+};
 use ratatui::{
-    DefaultTerminal, Frame,
+    Frame, Terminal,
+    backend::CrosstermBackend,
     layout::{Position, Rect},
     style::Color,
     symbols,
@@ -25,15 +35,27 @@ const LOG_TABS: [&str; 4] = ["DEBUG", "INFO", "WARN", "ERROR"];
 const CONSOLE_RESOURCE: &str = "console_data";
 
 struct ConsoleResource {
-    terminal: DefaultTerminal,
+    terminal: Terminal<CrosstermBackend<File>>,
     state: Screen,
+    stdout_redirector: StdoutRedirector,
 }
 
 impl ConsoleResource {
     fn new() -> Self {
+        // ratatui normally draws to fd 1, but `StdoutRedirector` replaces fd 1 with
+        // a pipe so raw writes (e.g. `printf` from C plugins) can't corrupt the TUI.
+        // Enter the alternate screen while fd 1 is still the real terminal, then
+        // duplicate it so the console keeps rendering there after the redirect.
+        let _ = enable_raw_mode();
+        let _ = execute!(std::io::stdout(), EnterAlternateScreen);
+        let console_out = unsafe { File::from_raw_fd(libc::dup(libc::STDOUT_FILENO)) };
+        let terminal = Terminal::new(CrosstermBackend::new(console_out))
+            .expect("failed to create console terminal");
+
         Self {
-            terminal: ratatui::init(),
+            terminal,
             state: Screen::default(),
+            stdout_redirector: StdoutRedirector::new(),
         }
     }
 
@@ -59,7 +81,89 @@ impl ConsoleResource {
 
 impl Drop for ConsoleResource {
     fn drop(&mut self) {
+        // fd 1 points at the capture pipe now, so put the real stdout back before
+        // leaving the alternate screen; otherwise ratatui's restore sequence would
+        // go into the pipe and leave the terminal stuck. `StdoutRedirector::drop`
+        // restores fd 1 again afterwards and closes the saved descriptors.
+        unsafe { libc::dup2(self.stdout_redirector.original_stdout, libc::STDOUT_FILENO) };
         ratatui::restore();
+    }
+}
+
+/// Redirects the process `stdout` into a pipe while the console is active so raw
+/// writes (like `printf` from C plugins) can't corrupt the ratatui rendering, and
+/// drains that pipe into the scene log on every console tick.
+struct StdoutRedirector {
+    /// Duplicate of the original `stdout`, put back on fd 1 when dropped.
+    original_stdout: RawFd,
+    /// Output (read) end of the capture pipe; kept non-blocking.
+    read_fd: RawFd,
+    /// Input (write) end of the capture pipe, installed as fd 1.
+    write_fd: RawFd,
+}
+
+impl StdoutRedirector {
+    fn new() -> Self {
+        // Save the real stdout, then splice the pipe's write end onto fd 1.
+        let original_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+
+        let mut pipe_fds = [0 as RawFd; 2];
+        unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
+        let [read_fd, write_fd] = pipe_fds;
+
+        // Draining runs on the console tick and must never block, so the read end
+        // returns immediately when the pipe is empty.
+        unsafe {
+            let flags = libc::fcntl(read_fd, libc::F_GETFL);
+            libc::fcntl(read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+
+        unsafe { libc::dup2(write_fd, libc::STDOUT_FILENO) };
+
+        Self {
+            original_stdout,
+            read_fd,
+            write_fd,
+        }
+    }
+
+    /// Reads everything currently buffered in the pipe's output end and appends it
+    /// to the scene log as a single `DEBUG` entry.
+    ///
+    /// Called on every console tick. While the console is active `stdout` is
+    /// redirected into the pipe, so raw writes (such as `printf` from a C plugin)
+    /// land here instead of on the terminal; this surfaces them in the log rather
+    /// than losing them.
+    fn write_stdout_to_log(&self, scene: &Scene) {
+        let mut output = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
+            let count =
+                unsafe { libc::read(self.read_fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+            if count <= 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count as usize]);
+        }
+
+        if output.is_empty() {
+            return;
+        }
+
+        let message = String::from_utf8_lossy(&output);
+        scene.log(LogLevel::DEBUG, message.trim_end().to_owned());
+    }
+}
+
+impl Drop for StdoutRedirector {
+    fn drop(&mut self) {
+        // Put the real stdout back on fd 1 and close the pipe.
+        unsafe {
+            libc::dup2(self.original_stdout, libc::STDOUT_FILENO);
+            libc::close(self.original_stdout);
+            libc::close(self.read_fd);
+            libc::close(self.write_fd);
+        }
     }
 }
 
@@ -387,6 +491,12 @@ impl Default for Screen {
 #[system]
 fn console(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     ensure_console(scene);
+
+    // Surface any raw writes pushed into the redirected stdout since the last tick
+    // as a DEBUG log entry before drawing.
+    if let Ok(console) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) {
+        console.borrow().stdout_redirector.write_stdout_to_log(scene);
+    }
 
     let (mut state, area) = {
         let Ok(console) = scene.get_resource::<RefCell<ConsoleResource>>(CONSOLE_RESOURCE) else {
