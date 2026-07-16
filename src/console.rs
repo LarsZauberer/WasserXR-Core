@@ -1144,15 +1144,18 @@ fn draw_log_list(frame: &mut Frame, scene: &Scene, level: LogLevel, scroll: usiz
     let (level_area, log_area) = split_header_content(content_area);
     build_log_tab_header(frame, level_area, log_level_index(level), follow);
 
-    let lines = log_display_lines(scene, level, log_area.width);
+    let mut lines = log_display_lines(scene, level, log_area.width);
 
     let visible_start = if follow {
         max_log_scroll(lines.len(), log_area.height)
     } else {
         clamp_log_scroll(scroll, lines.len(), log_area.height)
     };
-    let list = Paragraph::new(lines).scroll((visible_start as u16, 0));
-    frame.render_widget(list, log_area);
+    // Slice with the usize offset instead of casting to Paragraph's u16 scroll: wrapping can push the
+    // display-line count past u16::MAX, where the cast would wrap around to the wrong section (or
+    // overflow ratatui's `area.height + scroll.y` and panic in debug builds).
+    let visible = lines.split_off(visible_start.min(lines.len()));
+    frame.render_widget(Paragraph::new(visible), log_area);
     draw_keymap_hint(
         frame,
         hint_area,
