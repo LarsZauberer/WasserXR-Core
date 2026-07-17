@@ -58,7 +58,7 @@ impl ConsoleResource {
         }
 
         let build = || -> io::Result<Self> {
-            let console_out = dup_stdout()?;
+            let console_out = StdoutRedirector::dup_stdout()?;
             let terminal = Terminal::new(CrosstermBackend::new(File::from(console_out)))?;
             Ok(Self {
                 terminal,
@@ -163,7 +163,7 @@ struct StdoutRedirector {
 impl StdoutRedirector {
     fn new() -> io::Result<Self> {
         // Save the real stdout so it can be put back on drop.
-        let original_stdout = dup_stdout()?;
+        let original_stdout = Self::dup_stdout()?;
 
         // Create the capture pipe.
         let mut pipe_fds = [0 as RawFd; 2];
@@ -179,12 +179,12 @@ impl StdoutRedirector {
         // of blocking the writer. The console drains only once per tick, so a
         // blocking write end would let any system that emits more than the pipe
         // buffer between ticks stall the whole engine thread.
-        set_nonblocking(read_fd.as_raw_fd())?;
-        set_nonblocking(write_fd.as_raw_fd())?;
+        Self::set_nonblocking(read_fd.as_raw_fd())?;
+        Self::set_nonblocking(write_fd.as_raw_fd())?;
 
         // Flush any bytes still buffered for the real terminal before the pipe takes
         // over fd 1, otherwise they would be captured into the log instead.
-        flush_stdio();
+        Self::flush_stdio();
 
         // Splice the pipe's write end onto fd 1 last: on any earlier failure the
         // owned descriptors above close and fd 1 is left untouched.
@@ -224,7 +224,7 @@ impl StdoutRedirector {
         // Push libc's and Rust's stdout buffers into the pipe first: output to a pipe
         // is fully buffered, so unflushed `printf` bytes would otherwise sit in the
         // FILE* buffer and never reach us (and later corrupt the restored terminal).
-        flush_stdio();
+        Self::flush_stdio();
 
         let mut output = Vec::new();
         let mut buffer = [0u8; 4096];
@@ -248,6 +248,37 @@ impl StdoutRedirector {
 
         Some(String::from_utf8_lossy(&output).trim_end().to_owned())
     }
+
+    /// Flushes libc's and Rust's stdout buffers so buffered writes reach the
+    /// underlying fd instead of lingering in `FILE*`/`BufWriter` buffers.
+    fn flush_stdio() {
+        // `fflush(NULL)` flushes every open C stdio output stream.
+        unsafe { libc::fflush(std::ptr::null_mut()) };
+        let _ = io::stdout().flush();
+    }
+
+    /// Duplicates the current `stdout` (fd 1) into a new owned descriptor.
+    fn dup_stdout() -> io::Result<OwnedFd> {
+        let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `dup` returned a valid, freshly owned descriptor.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    /// Marks a descriptor non-blocking so reads and writes return instead of
+    /// blocking.
+    fn set_nonblocking(fd: RawFd) -> io::Result<()> {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 impl Drop for StdoutRedirector {
@@ -263,36 +294,6 @@ impl Drop for StdoutRedirector {
             }
         }
     }
-}
-
-/// Flushes libc's and Rust's stdout buffers so buffered writes reach the
-/// underlying fd instead of lingering in `FILE*`/`BufWriter` buffers.
-fn flush_stdio() {
-    // `fflush(NULL)` flushes every open C stdio output stream.
-    unsafe { libc::fflush(std::ptr::null_mut()) };
-    let _ = io::stdout().flush();
-}
-
-/// Duplicates the current `stdout` (fd 1) into a new owned descriptor.
-fn dup_stdout() -> io::Result<OwnedFd> {
-    let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `dup` returned a valid, freshly owned descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-}
-
-/// Marks a descriptor non-blocking so reads and writes return instead of blocking.
-fn set_nonblocking(fd: RawFd) -> io::Result<()> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 #[derive(Clone)]
