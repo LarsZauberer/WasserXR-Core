@@ -2,7 +2,10 @@ use std::cell::RefCell;
 
 use wasserxr::{Uuid, scene::Scene, system};
 
-use crate::xr::instance::{XRInstance, ensure_xrinstance};
+use crate::xr::{
+    instance::{XRInstance, ensure_xrinstance},
+    session::ensure_xrsession,
+};
 
 /// Owned copy of the OpenXR events we care about.
 ///
@@ -36,6 +39,7 @@ pub fn ensure_xr_events(scene: &mut Scene) {
 #[system]
 fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     ensure_xrinstance(scene);
+    ensure_xrsession(scene);
     ensure_xr_events(scene);
 
     let mut events: Vec<XrEvent> = Vec::new();
