@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     fs::File,
     io::{self, Read, Write},
-    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
     sync::{
         Once,
         atomic::{AtomicI32, Ordering},
@@ -108,13 +108,11 @@ impl Drop for ConsoleResource {
         // fd 1 points at the capture pipe now, so put the real stdout back before
         // leaving the alternate screen; otherwise ratatui's restore sequence would
         // go into the pipe and leave the terminal stuck. `StdoutRedirector::drop`
-        // restores fd 1 again afterwards and closes the saved descriptors.
-        unsafe {
-            libc::dup2(
-                self.stdout_redirector.original_stdout.as_raw_fd(),
-                libc::STDOUT_FILENO,
-            )
-        };
+        // restores fd 1 again afterwards and closes the saved fd.
+        let saved = SAVED_STDOUT.load(Ordering::SeqCst);
+        if saved >= 0 {
+            unsafe { libc::dup2(saved, libc::STDOUT_FILENO) };
+        }
         ratatui::restore();
 
         // The real terminal is back; surface the final captured output there rather
@@ -125,9 +123,10 @@ impl Drop for ConsoleResource {
     }
 }
 
-/// Raw fd of the saved real stdout while the redirect is in place, or `-1`. The
-/// panic hook reads it to move fd 1 back onto the real terminal before restoring
-/// it, since during operation fd 1 points at the capture pipe.
+/// Raw fd of the saved real stdout while the redirect is in place, or `-1`. This is
+/// the single owner of that descriptor: the panic hook and both `Drop` impls read it
+/// to move fd 1 back onto the real terminal (fd 1 points at the capture pipe during
+/// operation), and `StdoutRedirector::drop` closes it.
 static SAVED_STDOUT: AtomicI32 = AtomicI32::new(-1);
 
 /// Installs, once, a panic hook that restores the terminal before the previous hook
@@ -153,10 +152,11 @@ fn install_panic_hook() {
 /// writes (like `printf` from C plugins) can't corrupt the ratatui rendering, and
 /// drains that pipe into the scene log on every console tick.
 struct StdoutRedirector {
-    /// Duplicate of the original `stdout`, put back on fd 1 when dropped.
-    original_stdout: OwnedFd,
     /// Output (read) end of the capture pipe; kept non-blocking. The input (write)
     /// end lives on as fd 1, which is restored (and thereby closed) on drop.
+    ///
+    /// The saved original stdout is not stored here: [`SAVED_STDOUT`] owns it so the
+    /// panic hook can reach it too.
     read_fd: OwnedFd,
 }
 
@@ -195,13 +195,12 @@ impl StdoutRedirector {
         }
         drop(write_fd);
 
-        // Let the panic hook find the real stdout while the redirect is in place.
-        SAVED_STDOUT.store(original_stdout.as_raw_fd(), Ordering::SeqCst);
+        // Hand the saved stdout to the global, its single owner while the redirect is
+        // in place: the panic hook and both Drop impls read it, and it is closed when
+        // the redirect ends. `into_raw_fd` keeps the OwnedFd from closing it here.
+        SAVED_STDOUT.store(original_stdout.into_raw_fd(), Ordering::SeqCst);
 
-        Ok(Self {
-            original_stdout,
-            read_fd,
-        })
+        Ok(Self { read_fd })
     }
 
     /// Reads everything currently buffered in the pipe's output end and appends it
@@ -251,10 +250,16 @@ impl StdoutRedirector {
 
 impl Drop for StdoutRedirector {
     fn drop(&mut self) {
-        // The saved fd is about to close, so stop the panic hook from using it.
-        SAVED_STDOUT.store(-1, Ordering::SeqCst);
-        // Put the real stdout back on fd 1; the owned pipe descriptors close on drop.
-        unsafe { libc::dup2(self.original_stdout.as_raw_fd(), libc::STDOUT_FILENO) };
+        // Take the saved fd out of the global (also stopping the panic hook from
+        // using it), restore it onto fd 1, and close it. The read end closes with its
+        // owned descriptor.
+        let saved = SAVED_STDOUT.swap(-1, Ordering::SeqCst);
+        if saved >= 0 {
+            unsafe {
+                libc::dup2(saved, libc::STDOUT_FILENO);
+                libc::close(saved);
+            }
+        }
     }
 }
 
