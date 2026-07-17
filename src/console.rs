@@ -166,13 +166,7 @@ impl StdoutRedirector {
         let original_stdout = Self::dup_stdout()?;
 
         // Create the capture pipe.
-        let mut pipe_fds = [0 as RawFd; 2];
-        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: `pipe` succeeded, so both descriptors are freshly opened and owned.
-        let read_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
-        let write_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
+        let (read_fd, write_fd) = Self::create_pipe()?;
 
         // Both ends are non-blocking: the read end so draining never blocks when the
         // pipe is empty, and the write end (fd 1) so a full pipe drops output instead
@@ -265,6 +259,18 @@ impl StdoutRedirector {
         }
         // SAFETY: `dup` returned a valid, freshly owned descriptor.
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    /// Creates a pipe, returning its `(read, write)` ends as owned descriptors.
+    fn create_pipe() -> io::Result<(OwnedFd, OwnedFd)> {
+        let mut pipe_fds = [0 as RawFd; 2];
+        if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `pipe` succeeded, so both descriptors are freshly opened and owned.
+        let read_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+        let write_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
+        Ok((read_fd, write_fd))
     }
 
     /// Marks a descriptor non-blocking so reads and writes return instead of
