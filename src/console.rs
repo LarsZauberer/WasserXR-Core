@@ -187,12 +187,14 @@ impl StdoutRedirector {
         flush_stdio();
 
         // Splice the pipe's write end onto fd 1 last: on any earlier failure the
-        // owned descriptors above close and fd 1 is left untouched. fd 1 shares the
-        // write end's (non-blocking) file description, so `write_fd` is now redundant
-        // and dropped, leaving fd 1 as the sole owner of the pipe's write side.
+        // owned descriptors above close and fd 1 is left untouched.
         if unsafe { libc::dup2(write_fd.as_raw_fd(), libc::STDOUT_FILENO) } < 0 {
             return Err(io::Error::last_os_error());
         }
+        // `dup2` made fd 1 a second handle onto the write end's open file description
+        // (sharing its non-blocking flag), so this original handle is redundant.
+        // Dropping it leaves fd 1 as the sole owner of the pipe's write side, which is
+        // closed when the redirect is undone on drop.
         drop(write_fd);
 
         // Hand the saved stdout to the global, its single owner while the redirect is
