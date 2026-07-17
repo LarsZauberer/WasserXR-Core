@@ -19,7 +19,7 @@ impl XRInstance {
                     application_version: version_u32(core_version),
                     engine_name: "WasserXR",
                     engine_version: version_u32(engine_version),
-                    api_version: version_openxr(engine_version),
+                    api_version: version_openxr(),
                 },
                 &extensions,
                 &[],
@@ -84,8 +84,8 @@ fn version_u32(version: (u16, u16, u32)) -> u32 {
     u32::from(version.0) * 1_000_000 + u32::from(version.1) * 1_000 + version.2
 }
 
-fn version_openxr(version: (u16, u16, u32)) -> openxr::Version {
-    openxr::Version::new(version.0, version.1, version.2)
+fn version_openxr() -> openxr::Version {
+    openxr::Version::new(1, 0, 0)
 }
 
 pub fn ensure_xrinstance(scene: &mut Scene) {
@@ -105,7 +105,7 @@ pub fn ensure_xrinstance(scene: &mut Scene) {
             "OpenXR instance created\n\tapplication_name: WasserXR\n\tapplication_version: {}\n\tengine_name: WasserXR\n\tengine_version: {}\n\tapi_version: {}\n\truntime_name: {}\n\truntime_version: {}",
             version_u32(core_version),
             version_u32(engine_version),
-            version_openxr(engine_version),
+            version_openxr(),
             runtime.runtime_name,
             runtime.runtime_version
         );

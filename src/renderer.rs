@@ -6,8 +6,8 @@ use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
 use crate::{
     material_asset::MaterialData,
-    opengl_model_asset::Mesh,
     opengl::{Display, WINDOW_DISPLAY_RESOURCE, ensure_opengl_window},
+    opengl_model_asset::Mesh,
 };
 
 #[attacher(renderer)]
@@ -195,9 +195,11 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
                 continue;
             };
 
-            let Ok((meshes,)) =
-                scene.asset_query_loaded::<(&Vec<Mesh>,)>("OpenGLModelAsset", model_path, &["meshes"])
-            else {
+            let Ok((meshes,)) = scene.asset_query_loaded::<(&Vec<Mesh>,)>(
+                "OpenGLModelAsset",
+                model_path,
+                &["meshes"],
+            ) else {
                 continue;
             };
 
