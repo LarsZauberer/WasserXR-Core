@@ -24,7 +24,9 @@ impl XrEvent {
             self,
             XrEvent::InstanceLossPending
                 | XrEvent::SessionStateChanged(
-                    openxr::SessionState::EXITING | openxr::SessionState::LOSS_PENDING
+                    openxr::SessionState::EXITING
+                        | openxr::SessionState::LOSS_PENDING
+                        | openxr::SessionState::STOPPING
                 )
         )
     }
