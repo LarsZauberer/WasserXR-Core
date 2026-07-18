@@ -7,9 +7,8 @@
 //! buffers, shaders, frames, and draw calls. It hides the lower-level glutin
 //! handles so normal 2D window rendering can stay simple.
 //!
-//! `glutin::display::Display` is the connection to the platform OpenGL display
-//! provider, such as GLX on X11 or EGL/Wayland. It can create configs,
-//! contexts, and surfaces.
+//! `glutin::display::Display` is the connection to the X11 GLX display
+//! provider. It can create configs, contexts, and surfaces.
 //!
 //! `Surface` is the drawable OpenGL target attached to the window. Glium uses
 //! it as the window backbuffer target, while OpenXR only needs its raw drawable
@@ -38,7 +37,7 @@ use glium::{
     winit::{dpi::PhysicalSize, window::Window},
 };
 use glutin_winit::DisplayBuilder;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle};
+use raw_window_handle::HasWindowHandle;
 use wasserxr::scene::Scene;
 
 use crate::window::get_event_loop;
@@ -54,46 +53,31 @@ pub(crate) struct OpenGLWindow {
     pub(crate) context: OpenGLContext,
 }
 
-pub(crate) enum OpenGLContext {
-    Xlib {
-        x_display: *mut openxr::sys::platform::Display,
-        visualid: u32,
-        glx_fb_config: openxr::sys::platform::GLXFBConfig,
-        glx_drawable: openxr::sys::platform::GLXDrawable,
-        glx_context: openxr::sys::platform::GLXContext,
-    },
-    Wayland {
-        display: *mut openxr::sys::platform::wl_display,
-    },
+pub(crate) struct OpenGLContext {
+    x_display: *mut openxr::sys::platform::Display,
+    visualid: u32,
+    glx_fb_config: openxr::sys::platform::GLXFBConfig,
+    glx_drawable: openxr::sys::platform::GLXDrawable,
+    glx_context: openxr::sys::platform::GLXContext,
 }
 
 impl OpenGLContext {
     pub(crate) fn session_create_info(&self) -> openxr::opengl::SessionCreateInfo {
-        match *self {
-            Self::Xlib {
-                x_display,
-                visualid,
-                glx_fb_config,
-                glx_drawable,
-                glx_context,
-            } => openxr::opengl::SessionCreateInfo::Xlib {
-                x_display,
-                visualid,
-                glx_fb_config,
-                glx_drawable,
-                glx_context,
-            },
-            Self::Wayland { display } => openxr::opengl::SessionCreateInfo::Wayland { display },
+        openxr::opengl::SessionCreateInfo::Xlib {
+            x_display: self.x_display,
+            visualid: self.visualid,
+            glx_fb_config: self.glx_fb_config,
+            glx_drawable: self.glx_drawable,
+            glx_context: self.glx_context,
         }
     }
 
     fn from_glutin(
-        window: &Window,
         config: &glutin::config::Config,
         context: &glutin::context::PossiblyCurrentContext,
         surface: &glutin::surface::Surface<WindowSurface>,
     ) -> Self {
-        if let (
+        let (
             RawDisplay::Glx(x_display),
             RawConfig::Glx(glx_fb_config),
             RawContext::Glx(glx_context),
@@ -103,30 +87,21 @@ impl OpenGLContext {
             config.raw_config(),
             context.raw_context(),
             surface.raw_surface(),
-        ) {
-            return Self::Xlib {
-                x_display: x_display.cast_mut().cast(),
-                visualid: config
-                    .x11_visual()
-                    .expect("Failed to get X11 visual")
-                    .visual_id() as u32,
-                glx_fb_config: glx_fb_config.cast_mut(),
-                glx_drawable,
-                glx_context: glx_context.cast_mut(),
-            };
-        }
+        )
+        else {
+            panic!("OpenXR requires an X11 GLX context");
+        };
 
-        if let RawDisplayHandle::Wayland(handle) = window
-            .display_handle()
-            .expect("Failed to get raw display handle")
-            .as_raw()
-        {
-            return Self::Wayland {
-                display: handle.display.as_ptr().cast(),
-            };
+        Self {
+            x_display: x_display.cast_mut().cast(),
+            visualid: config
+                .x11_visual()
+                .expect("Failed to get X11 visual")
+                .visual_id() as u32,
+            glx_fb_config: glx_fb_config.cast_mut(),
+            glx_drawable,
+            glx_context: glx_context.cast_mut(),
         }
-
-        panic!("Unsupported OpenGL context for OpenXR");
     }
 }
 
@@ -228,7 +203,7 @@ pub(crate) fn create_render_window(scene: &mut Scene, version: Version) -> OpenG
     }
     .make_current(&surface)
     .expect("Failed to make OpenGL context current");
-    let opengl_context = OpenGLContext::from_glutin(&window, &config, &context, &surface);
+    let opengl_context = OpenGLContext::from_glutin(&config, &context, &surface);
     let display =
         Display::from_context_surface(context, surface).expect("Failed to create Display");
 
