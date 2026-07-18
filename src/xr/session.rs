@@ -16,10 +16,6 @@ impl XRSession {
             .instance()
             .system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)
             .expect("Failed to get OpenXR system");
-        instance
-            .instance()
-            .graphics_requirements::<openxr::OpenGL>(system)
-            .expect("Failed to get OpenGL graphics requirements");
         let system_properties = instance
             .instance()
             .system_properties(system)

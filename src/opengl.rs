@@ -29,7 +29,7 @@ use glium::{
     glutin::{
         self,
         config::{AsRawConfig, ConfigTemplateBuilder, RawConfig},
-        context::{AsRawContext, ContextAttributesBuilder, RawContext},
+        context::{AsRawContext, ContextApi, ContextAttributesBuilder, RawContext, Version},
         display::{AsRawDisplay, GetGlDisplay, RawDisplay},
         platform::x11::X11GlConfigExt,
         prelude::*,
@@ -42,6 +42,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle};
 use wasserxr::scene::Scene;
 
 use crate::window::get_event_loop;
+use crate::xr::instance::{XRInstance, ensure_xrinstance};
 
 pub(crate) type Display = glium::backend::glutin::Display<WindowSurface>;
 
@@ -137,7 +138,8 @@ pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
         return;
     }
 
-    let opengl_window = create_render_window(scene);
+    let version = required_opengl_version(scene);
+    let opengl_window = create_render_window(scene, version);
     scene
         .add_resource(
             OPENGL_WINDOW_RESOURCE.to_owned(),
@@ -146,7 +148,45 @@ pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
         .expect("Failed to add OpenGL window resource");
 }
 
-pub(crate) fn create_render_window(scene: &mut Scene) -> OpenGLWindow {
+fn required_opengl_version(scene: &mut Scene) -> Version {
+    ensure_xrinstance(scene);
+
+    let requirements = {
+        let instance = scene
+            .get_resource::<RefCell<XRInstance>>("xrinstance")
+            .expect("Failed to get OpenXR instance");
+        let instance = instance.borrow();
+        let system = instance
+            .instance()
+            .system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)
+            .expect("Failed to get OpenXR system");
+        instance
+            .instance()
+            .graphics_requirements::<openxr::OpenGL>(system)
+            .expect("Failed to get OpenGL graphics requirements")
+    };
+    let version = requirements
+        .min_api_version_supported
+        .max(openxr::Version::new(3, 3, 0));
+
+    assert!(
+        version <= requirements.max_api_version_supported,
+        "OpenXR runtime does not support the required OpenGL 3.3 API"
+    );
+
+    Version::new(
+        version
+            .major()
+            .try_into()
+            .expect("Invalid OpenGL major version"),
+        version
+            .minor()
+            .try_into()
+            .expect("Invalid OpenGL minor version"),
+    )
+}
+
+pub(crate) fn create_render_window(scene: &mut Scene, version: Version) -> OpenGLWindow {
     let event_loop = get_event_loop(scene);
     let attributes = Window::default_attributes()
         // TODO: Make the title parameterizable
@@ -175,12 +215,14 @@ pub(crate) fn create_render_window(scene: &mut Scene) -> OpenGLWindow {
             .create_window_surface(&config, &surface_attributes)
             .expect("Failed to create OpenGL surface")
     };
-    let context_attributes = ContextAttributesBuilder::new().build(Some(
-        window
-            .window_handle()
-            .expect("Failed to get raw window handle")
-            .into(),
-    ));
+    let context_attributes = ContextAttributesBuilder::new()
+        .with_context_api(ContextApi::OpenGl(Some(version)))
+        .build(Some(
+            window
+                .window_handle()
+                .expect("Failed to get raw window handle")
+                .into(),
+        ));
     let context = unsafe {
         config
             .display()
