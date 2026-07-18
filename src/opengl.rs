@@ -45,8 +45,13 @@ use crate::window::get_event_loop;
 
 pub(crate) type Display = glium::backend::glutin::Display<WindowSurface>;
 
-pub(crate) const OPENGL_CONTEXT_RESOURCE: &str = "opengl_context";
-pub(crate) const WINDOW_DISPLAY_RESOURCE: &str = "opengl_window_display";
+pub(crate) const OPENGL_WINDOW_RESOURCE: &str = "opengl_window";
+
+pub(crate) struct OpenGLWindow {
+    pub(crate) window: Window,
+    pub(crate) display: Display,
+    pub(crate) context: OpenGLContext,
+}
 
 pub(crate) enum OpenGLContext {
     Xlib {
@@ -126,27 +131,22 @@ impl OpenGLContext {
 
 pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
     if scene
-        .get_resource::<RefCell<(Window, Display)>>(WINDOW_DISPLAY_RESOURCE)
+        .get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
         .is_ok()
-        && scene
-            .get_resource::<RefCell<OpenGLContext>>(OPENGL_CONTEXT_RESOURCE)
-            .is_ok()
     {
         return;
     }
 
-    let (rendering_window, opengl_context) = create_render_window(scene);
-    let _ = scene.add_resource(
-        WINDOW_DISPLAY_RESOURCE.to_owned(),
-        RefCell::new(rendering_window),
-    );
-    let _ = scene.add_resource(
-        OPENGL_CONTEXT_RESOURCE.to_owned(),
-        RefCell::new(opengl_context),
-    );
+    let opengl_window = create_render_window(scene);
+    scene
+        .add_resource(
+            OPENGL_WINDOW_RESOURCE.to_owned(),
+            RefCell::new(opengl_window),
+        )
+        .expect("Failed to add OpenGL window resource");
 }
 
-pub(crate) fn create_render_window(scene: &mut Scene) -> ((Window, Display), OpenGLContext) {
+pub(crate) fn create_render_window(scene: &mut Scene) -> OpenGLWindow {
     let event_loop = get_event_loop(scene);
     let attributes = Window::default_attributes()
         // TODO: Make the title parameterizable
@@ -193,5 +193,9 @@ pub(crate) fn create_render_window(scene: &mut Scene) -> ((Window, Display), Ope
     let display =
         Display::from_context_surface(context, surface).expect("Failed to create Display");
 
-    ((window, display), opengl_context)
+    OpenGLWindow {
+        window,
+        display,
+        context: opengl_context,
+    }
 }

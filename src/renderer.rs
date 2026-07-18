@@ -1,12 +1,12 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
-use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
+use glium::{DrawParameters, Program, Surface, dynamic_uniform};
 use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
 
 use crate::{
     material_asset::MaterialData,
-    opengl::{Display, WINDOW_DISPLAY_RESOURCE, ensure_opengl_window},
+    opengl::{OPENGL_WINDOW_RESOURCE, OpenGLWindow, ensure_opengl_window},
     opengl_model_asset::Mesh,
 };
 
@@ -39,13 +39,12 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
     };
 
     let aspect_ratio = {
-        let Ok(window_display) =
-            scene.get_resource::<RefCell<(Window, Display)>>(WINDOW_DISPLAY_RESOURCE)
+        let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
         else {
             return;
         };
-        let window_display = window_display.borrow();
-        let window = &window_display.0;
+        let opengl_window = opengl_window.borrow();
+        let window = &opengl_window.window;
         (window.inner_size().width as f32) / (window.inner_size().height as f32)
     };
 
@@ -157,13 +156,12 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
     let mut draw_errors = Vec::new();
     {
-        let Ok(window_display) =
-            scene.get_resource::<RefCell<(Window, Display)>>(WINDOW_DISPLAY_RESOURCE)
+        let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
         else {
             return;
         };
-        let window_display = window_display.borrow();
-        let display = &window_display.1;
+        let opengl_window = opengl_window.borrow();
+        let display = &opengl_window.display;
         let mut frame = display.draw();
         frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
 
