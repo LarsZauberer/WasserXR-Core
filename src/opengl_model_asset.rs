@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use glium::{IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList};
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
 
@@ -35,11 +33,9 @@ fn create_opengl_model_asset(scene: &mut Scene, data: &str) -> Option<OpenGLMode
     }
 
     // Get the OpenGL Context
-    let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
-    else {
+    let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
         return None;
     };
-    let opengl_window = opengl_window.borrow();
     let display = &opengl_window.display;
 
     let Ok((raw_meshes,)) =

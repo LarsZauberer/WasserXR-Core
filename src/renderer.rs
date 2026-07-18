@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::collections::HashMap;
 
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
 use glium::{DrawParameters, Program, Surface, dynamic_uniform};
@@ -24,6 +24,12 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
     ensure_opengl_window(scene);
 
+    let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
+        return;
+    };
+    let window = &opengl_window.window;
+    let display = &opengl_window.display;
+
     // Get the window and camera entity
     let camera_entity = entities[0][0];
 
@@ -38,15 +44,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     };
 
-    let aspect_ratio = {
-        let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
-        else {
-            return;
-        };
-        let opengl_window = opengl_window.borrow();
-        let window = &opengl_window.window;
-        (window.inner_size().width as f32) / (window.inner_size().height as f32)
-    };
+    let aspect_ratio = (window.inner_size().width as f32) / (window.inner_size().height as f32);
 
     // Camera position
     let mut cam_position: [f32; 3] = [0.0, 0.0, 0.0];
@@ -62,7 +60,18 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         cam_rotation = *rotation;
     }
 
-    let mut render_items = Vec::new();
+    let mut frame = display.draw();
+    frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
+
+    let draw_params = DrawParameters {
+        depth: glium::Depth {
+            test: glium::DepthTest::IfLess,
+            write: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
     for entity in &entities[1] {
         // Get all assets and information
         let Ok((model_path, material_path)) =
@@ -107,6 +116,26 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
             continue;
         }
 
+        let Ok((shader_program,)) =
+            scene.asset_query_loaded::<(&Program,)>("ShaderAsset", &shader_path, &["shader"])
+        else {
+            continue;
+        };
+
+        let Ok((material_data,)) = scene.asset_query_loaded::<(&HashMap<String, MaterialData>,)>(
+            "MaterialAsset",
+            &material_path,
+            &["data"],
+        ) else {
+            continue;
+        };
+
+        let Ok((meshes,)) =
+            scene.asset_query_loaded::<(&Vec<Mesh>,)>("OpenGLModelAsset", &model_path, &["meshes"])
+        else {
+            continue;
+        };
+
         let (transform, normal_transform) = scene
             .query::<(&[f32; 3], &[f32; 3], &[f32; 3])>(
                 *entity,
@@ -144,93 +173,31 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
                 )
             });
 
-        render_items.push((
-            *entity,
-            model_path,
-            material_path,
-            shader_path,
-            transform,
-            normal_transform,
-        ));
-    }
+        // Build Uniforms
+        let mut uniforms = dynamic_uniform! {};
+        uniforms.add("transform", &transform);
+        uniforms.add("normal_transform", &normal_transform);
 
-    let mut draw_errors = Vec::new();
-    {
-        let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
-        else {
-            return;
-        };
-        let opengl_window = opengl_window.borrow();
-        let display = &opengl_window.display;
-        let mut frame = display.draw();
-        frame.clear_color_and_depth((0.0, 0.0, 0.0, 1.0), 1.0);
-
-        let draw_params = DrawParameters {
-            depth: glium::Depth {
-                test: glium::DepthTest::IfLess,
-                write: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        for (entity, model_path, material_path, shader_path, transform, normal_transform) in
-            &render_items
-        {
-            let Ok((shader_program,)) =
-                scene.asset_query_loaded::<(&Program,)>("ShaderAsset", shader_path, &["shader"])
-            else {
-                continue;
-            };
-
-            let Ok((material_data,)) = scene
-                .asset_query_loaded::<(&HashMap<String, MaterialData>,)>(
-                    "MaterialAsset",
-                    material_path,
-                    &["data"],
-                )
-            else {
-                continue;
-            };
-
-            let Ok((meshes,)) = scene.asset_query_loaded::<(&Vec<Mesh>,)>(
-                "OpenGLModelAsset",
-                model_path,
-                &["meshes"],
-            ) else {
-                continue;
-            };
-
-            // Build Uniforms
-            let mut uniforms = dynamic_uniform! {};
-            uniforms.add("transform", transform);
-            uniforms.add("normal_transform", normal_transform);
-
-            // Build Uniform from material data
-            for (key, value) in material_data.iter() {
-                uniforms.add(key, value);
-            }
-
-            // Final draw calls
-            for mesh in meshes {
-                if let Err(err) = frame.draw(
-                    &mesh.vertices,
-                    &mesh.indices,
-                    shader_program,
-                    &uniforms,
-                    &draw_params,
-                ) {
-                    draw_errors.push(format!("Failed to draw entity {}: {:?}", entity, err));
-                }
-            }
+        // Build Uniform from material data
+        for (key, value) in material_data.iter() {
+            uniforms.add(key, value);
         }
 
-        frame.finish().unwrap();
+        // Final draw calls
+        for mesh in meshes {
+            if let Err(err) = frame.draw(
+                &mesh.vertices,
+                &mesh.indices,
+                shader_program,
+                &uniforms,
+                &draw_params,
+            ) {
+                warn!(scene, "Failed to draw entity {}: {:?}", entity, err);
+            }
+        }
     }
 
-    for error in draw_errors {
-        warn!(scene, "{}", error);
-    }
+    frame.finish().unwrap();
 }
 
 fn to_rotation_vec3_from_array(vec: [f32; 3]) -> Vec3 {

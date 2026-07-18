@@ -132,7 +132,7 @@ impl OpenGLContext {
 
 pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
     if scene
-        .get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
+        .get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE)
         .is_ok()
     {
         return;
@@ -141,10 +141,7 @@ pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
     let version = required_opengl_version(scene);
     let opengl_window = create_render_window(scene, version);
     scene
-        .add_resource(
-            OPENGL_WINDOW_RESOURCE.to_owned(),
-            RefCell::new(opengl_window),
-        )
+        .add_resource(OPENGL_WINDOW_RESOURCE.to_owned(), opengl_window)
         .expect("Failed to add OpenGL window resource");
 }
 

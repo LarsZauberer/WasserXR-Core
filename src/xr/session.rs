@@ -49,10 +49,9 @@ pub fn ensure_xrsession(scene: &mut Scene) {
                 .get_resource::<RefCell<XRInstance>>("xrinstance")
                 .expect("Failed to get OpenXR instance");
             let opengl_window = scene
-                .get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
+                .get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE)
                 .expect("Failed to get OpenGL window");
             let instance = instance.borrow();
-            let opengl_window = opengl_window.borrow();
             XRSession::new(&instance, &opengl_window.context)
         };
         info!(

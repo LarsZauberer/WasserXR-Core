@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fs};
+use std::fs;
 
 use glium::Program;
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, utils::paths::get_asset_path, warn};
@@ -28,11 +28,9 @@ fn shader_creator(scene: &mut Scene, path: &str) -> Option<ShaderAsset> {
     };
 
     // Get the opengl context
-    let Ok(opengl_window) = scene.get_resource::<RefCell<OpenGLWindow>>(OPENGL_WINDOW_RESOURCE)
-    else {
+    let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
         return None;
     };
-    let opengl_window = opengl_window.borrow();
     let display = &opengl_window.display;
 
     let program = match Program::from_source(display, &vertex, &fragment, None) {
