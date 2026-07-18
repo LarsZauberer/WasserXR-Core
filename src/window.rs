@@ -1,8 +1,10 @@
 use std::time::Duration;
 
 use glium::winit::{
-    application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
-    platform::pump_events::EventLoopExtPumpEvents,
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::EventLoop,
+    platform::{pump_events::EventLoopExtPumpEvents, x11::EventLoopBuilderExtX11},
 };
 use wasserxr::{Uuid, scene::Scene, system};
 
@@ -32,7 +34,10 @@ pub(crate) fn get_event_loop(scene: &mut Scene) -> &mut EventLoop<()> {
     {
         let _ = scene.add_resource::<EventLoop<()>>(
             "window_event_loop".to_owned(),
-            glium::winit::event_loop::EventLoop::new().expect("Failed to create EventLoop"),
+            glium::winit::event_loop::EventLoop::builder()
+                .with_x11()
+                .build()
+                .expect("Failed to create EventLoop"),
         );
     }
 
