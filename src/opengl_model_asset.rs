@@ -1,9 +1,10 @@
-use glium::{
-    IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList, winit::window::Window,
-};
+use glium::{IndexBuffer, VertexBuffer, index::PrimitiveType::TrianglesList};
 use wasserxr::{asset_type, asset_type_creator, scene::Scene, warn};
 
-use crate::{model_asset::RawMesh, renderer::Display};
+use crate::{
+    model_asset::RawMesh,
+    opengl::{OPENGL_WINDOW_RESOURCE, OpenGLWindow},
+};
 
 #[derive(Copy, Clone)]
 pub struct Vertex {
@@ -32,9 +33,10 @@ fn create_opengl_model_asset(scene: &mut Scene, data: &str) -> Option<OpenGLMode
     }
 
     // Get the OpenGL Context
-    let Ok((_, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
+    let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
         return None;
     };
+    let display = &opengl_window.display;
 
     let Ok((raw_meshes,)) =
         scene.asset_query_loaded::<(&Vec<RawMesh>,)>("ModelAsset", data, &["raw_meshes"])

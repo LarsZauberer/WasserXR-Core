@@ -1,35 +1,20 @@
 use std::collections::HashMap;
 
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
-use glium::{DrawParameters, Program, Surface, dynamic_uniform, winit::window::Window};
-use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
+use glium::{DrawParameters, Program, Surface, dynamic_uniform};
+use wasserxr::{Uuid, attacher, error, scene::Scene, system, warn};
 
-use crate::{material_asset::MaterialData, opengl_model_asset::Mesh, window::get_event_loop};
-
-pub type Display = glium::backend::glutin::Display<glium::glutin::surface::WindowSurface>;
-
-pub(crate) fn get_window_display(scene: &mut Scene) -> &mut (Window, Display) {
-    if scene
-        .get_resource::<(Window, Display)>("render_window")
-        .is_err()
-    {
-        let event_loop = get_event_loop(scene);
-        let config = glium::glutin::config::ConfigTemplateBuilder::new().with_multisampling(8);
-        let rendering_window = glium::backend::glutin::SimpleWindowBuilder::new()
-            .with_config_template_builder(config)
-            .build(event_loop);
-        let _ =
-            scene.add_resource::<(Window, Display)>("render_window".to_owned(), rendering_window);
-    }
-
-    scene
-        .get_mut_resource::<(Window, Display)>("render_window")
-        .expect("Failed to get the Rendering Window")
-}
+use crate::{
+    material_asset::MaterialData,
+    opengl::{OPENGL_WINDOW_RESOURCE, OpenGLWindow, ensure_opengl_window},
+    opengl_model_asset::Mesh,
+};
 
 #[attacher(renderer)]
 fn renderer_attach(scene: &mut Scene) {
-    let _ = get_window_display(scene);
+    if let Err(err) = ensure_opengl_window(scene) {
+        error!(scene, "Failed to initialize renderer: {}", err);
+    }
 }
 
 #[system(entities=[["Camera"], ["Model"]])]
@@ -39,9 +24,16 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     }
 
-    let Ok((window, display)) = scene.get_resource::<(Window, Display)>("render_window") else {
+    if let Err(err) = ensure_opengl_window(scene) {
+        error!(scene, "Failed to initialize renderer: {}", err);
+        return;
+    }
+
+    let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
         return;
     };
+    let window = &opengl_window.window;
+    let display = &opengl_window.display;
 
     // Get the window and camera entity
     let camera_entity = entities[0][0];
@@ -57,8 +49,7 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     };
 
-    let aspect_ratio: f32 =
-        (window.inner_size().width as f32) / (window.inner_size().height as f32);
+    let aspect_ratio = (window.inner_size().width as f32) / (window.inner_size().height as f32);
 
     // Camera position
     let mut cam_position: [f32; 3] = [0.0, 0.0, 0.0];
@@ -199,19 +190,15 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
 
         // Final draw calls
         for mesh in meshes {
-            match frame.draw(
+            if let Err(err) = frame.draw(
                 &mesh.vertices,
                 &mesh.indices,
                 shader_program,
                 &uniforms,
                 &draw_params,
             ) {
-                Ok(_) => {}
-                Err(err) => {
-                    warn!(scene, "Failed to draw entity {}: {:?}", entity, err);
-                    continue;
-                }
-            };
+                warn!(scene, "Failed to draw entity {}: {:?}", entity, err);
+            }
         }
     }
 

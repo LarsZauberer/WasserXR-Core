@@ -1,10 +1,12 @@
 use std::time::Duration;
 
 use glium::winit::{
-    application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
-    platform::pump_events::EventLoopExtPumpEvents,
+    application::ApplicationHandler,
+    event::WindowEvent,
+    event_loop::EventLoop,
+    platform::{pump_events::EventLoopExtPumpEvents, x11::EventLoopBuilderExtX11},
 };
-use wasserxr::{Uuid, scene::Scene, system};
+use wasserxr::{Uuid, error, scene::Scene, system};
 
 struct InputGetterApp<'a> {
     events: &'a mut Vec<WindowEvent>,
@@ -25,20 +27,23 @@ impl<'a> ApplicationHandler for InputGetterApp<'a> {
     }
 }
 
-pub(crate) fn get_event_loop(scene: &mut Scene) -> &mut EventLoop<()> {
+pub(crate) fn get_event_loop(scene: &mut Scene) -> Result<&mut EventLoop<()>, String> {
     if scene
         .get_resource::<EventLoop<()>>("window_event_loop")
         .is_err()
     {
-        let _ = scene.add_resource::<EventLoop<()>>(
-            "window_event_loop".to_owned(),
-            glium::winit::event_loop::EventLoop::new().expect("Failed to create EventLoop"),
-        );
+        let event_loop = glium::winit::event_loop::EventLoop::builder()
+            .with_x11()
+            .build()
+            .map_err(|err| format!("Failed to create event loop: {err}"))?;
+        scene
+            .add_resource("window_event_loop".to_owned(), event_loop)
+            .map_err(|err| format!("Failed to add window event loop resource: {err:?}"))?;
     }
 
     scene
         .get_mut_resource::<EventLoop<()>>("window_event_loop")
-        .expect("Failed to get the EventLoop")
+        .map_err(|err| format!("Failed to get window event loop: {err:?}"))
 }
 
 #[system]
@@ -47,7 +52,14 @@ fn window_input_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     let mut app = InputGetterApp {
         events: &mut events,
     };
-    get_event_loop(scene).pump_app_events(Some(Duration::ZERO), &mut app);
+    let event_loop = match get_event_loop(scene) {
+        Ok(event_loop) => event_loop,
+        Err(err) => {
+            error!(scene, "Failed to read window input: {}", err);
+            return;
+        }
+    };
+    event_loop.pump_app_events(Some(Duration::ZERO), &mut app);
 
     if let Ok(scene_events) = scene.get_mut_resource::<Vec<WindowEvent>>("window_events") {
         *scene_events = events;
