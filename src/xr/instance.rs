@@ -49,10 +49,18 @@ fn core_version() -> (u16, u16, u32) {
 }
 
 fn engine_version() -> (u16, u16, u32) {
-    let version = include_str!("../../Cargo.toml")
+    let manifest = include_str!("../../Cargo.toml");
+    let version = manifest
         .split("wasserxr = { version = \"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
+        .or_else(|| {
+            manifest
+                .split("[dependencies.wasserxr]")
+                .nth(1)?
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("version = \"")?.split('"').next())
+        })
         .expect("Failed to read WasserXR dependency version");
 
     parse_version(version)
