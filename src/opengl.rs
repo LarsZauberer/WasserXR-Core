@@ -76,7 +76,7 @@ impl OpenGLContext {
         config: &glutin::config::Config,
         context: &glutin::context::PossiblyCurrentContext,
         surface: &glutin::surface::Surface<WindowSurface>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (
             RawDisplay::Glx(x_display),
             RawConfig::Glx(glx_fb_config),
@@ -89,77 +89,81 @@ impl OpenGLContext {
             surface.raw_surface(),
         )
         else {
-            panic!("OpenXR requires an X11 GLX context");
+            return Err("OpenXR requires an X11 GLX context".to_owned());
         };
 
-        Self {
+        Ok(Self {
             x_display: x_display.cast_mut().cast(),
             visualid: config
                 .x11_visual()
-                .expect("Failed to get X11 visual")
+                .ok_or_else(|| "Failed to get X11 visual".to_owned())?
                 .visual_id() as u32,
             glx_fb_config: glx_fb_config.cast_mut(),
             glx_drawable,
             glx_context: glx_context.cast_mut(),
-        }
+        })
     }
 }
 
-pub(crate) fn ensure_opengl_window(scene: &mut Scene) {
+pub(crate) fn ensure_opengl_window(scene: &mut Scene) -> Result<(), String> {
     if scene
         .get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE)
         .is_ok()
     {
-        return;
+        return Ok(());
     }
 
-    let version = required_opengl_version(scene);
-    let opengl_window = create_render_window(scene, version);
+    let version = required_opengl_version(scene)?;
+    let opengl_window = create_render_window(scene, version)?;
     scene
         .add_resource(OPENGL_WINDOW_RESOURCE.to_owned(), opengl_window)
-        .expect("Failed to add OpenGL window resource");
+        .map_err(|err| format!("Failed to add OpenGL window resource: {err:?}"))?;
+
+    Ok(())
 }
 
-fn required_opengl_version(scene: &mut Scene) -> Version {
-    ensure_xrinstance(scene);
+fn required_opengl_version(scene: &mut Scene) -> Result<Version, String> {
+    ensure_xrinstance(scene)?;
 
     let requirements = {
         let instance = scene
             .get_resource::<RefCell<XRInstance>>("xrinstance")
-            .expect("Failed to get OpenXR instance");
+            .map_err(|err| format!("Failed to get OpenXR instance: {err:?}"))?;
         let instance = instance.borrow();
         let system = instance
             .instance()
             .system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)
-            .expect("Failed to get OpenXR system");
+            .map_err(|err| format!("Failed to get OpenXR system: {err}"))?;
         instance
             .instance()
             .graphics_requirements::<openxr::OpenGL>(system)
-            .expect("Failed to get OpenGL graphics requirements")
+            .map_err(|err| format!("Failed to get OpenGL graphics requirements: {err}"))?
     };
     let version = requirements
         .min_api_version_supported
         .max(openxr::Version::new(3, 3, 0));
 
-    assert!(
-        version <= requirements.max_api_version_supported,
-        "OpenXR runtime does not support the required OpenGL 3.3 API"
-    );
+    if version > requirements.max_api_version_supported {
+        return Err("OpenXR runtime does not support the required OpenGL 3.3 API".to_owned());
+    }
 
-    Version::new(
+    Ok(Version::new(
         version
             .major()
             .try_into()
-            .expect("Invalid OpenGL major version"),
+            .map_err(|err| format!("Invalid OpenGL major version: {err}"))?,
         version
             .minor()
             .try_into()
-            .expect("Invalid OpenGL minor version"),
-    )
+            .map_err(|err| format!("Invalid OpenGL minor version: {err}"))?,
+    ))
 }
 
-pub(crate) fn create_render_window(scene: &mut Scene, version: Version) -> OpenGLWindow {
-    let event_loop = get_event_loop(scene);
+pub(crate) fn create_render_window(
+    scene: &mut Scene,
+    version: Version,
+) -> Result<OpenGLWindow, String> {
+    let event_loop = get_event_loop(scene)?;
     let attributes = Window::default_attributes()
         // TODO: Make the title parameterizable
         .with_title("WasserXR")
@@ -168,48 +172,44 @@ pub(crate) fn create_render_window(scene: &mut Scene, version: Version) -> OpenG
     let (window, config) = DisplayBuilder::new()
         .with_window_attributes(Some(attributes))
         .build(event_loop, config_template, |mut configs| {
-            configs.next().expect("Failed to find OpenGL config")
+            // glutin-winit guarantees that this iterator is non-empty.
+            configs.next().unwrap()
         })
-        .expect("Failed to create OpenGL window");
-    let window = window.expect("Failed to create Window");
+        .map_err(|err| format!("Failed to create OpenGL window: {err}"))?;
+    let window = window.ok_or_else(|| "Failed to create window".to_owned())?;
     let (width, height): (u32, u32) = window.inner_size().into();
+    let window_handle = window
+        .window_handle()
+        .map_err(|err| format!("Failed to get raw window handle: {err}"))?;
     let surface_attributes = SurfaceAttributesBuilder::<WindowSurface>::new().build(
-        window
-            .window_handle()
-            .expect("Failed to get raw window handle")
-            .into(),
-        NonZeroU32::new(width).unwrap_or(NonZeroU32::new(1).unwrap()),
-        NonZeroU32::new(height).unwrap_or(NonZeroU32::new(1).unwrap()),
+        window_handle.into(),
+        NonZeroU32::new(width).unwrap_or(NonZeroU32::MIN),
+        NonZeroU32::new(height).unwrap_or(NonZeroU32::MIN),
     );
     let surface = unsafe {
         config
             .display()
             .create_window_surface(&config, &surface_attributes)
-            .expect("Failed to create OpenGL surface")
+            .map_err(|err| format!("Failed to create OpenGL surface: {err}"))?
     };
     let context_attributes = ContextAttributesBuilder::new()
         .with_context_api(ContextApi::OpenGl(Some(version)))
-        .build(Some(
-            window
-                .window_handle()
-                .expect("Failed to get raw window handle")
-                .into(),
-        ));
+        .build(Some(window_handle.into()));
     let context = unsafe {
         config
             .display()
             .create_context(&config, &context_attributes)
-            .expect("Failed to create OpenGL context")
+            .map_err(|err| format!("Failed to create OpenGL context: {err}"))?
     }
     .make_current(&surface)
-    .expect("Failed to make OpenGL context current");
-    let opengl_context = OpenGLContext::from_glutin(&config, &context, &surface);
-    let display =
-        Display::from_context_surface(context, surface).expect("Failed to create Display");
+    .map_err(|err| format!("Failed to make OpenGL context current: {err}"))?;
+    let opengl_context = OpenGLContext::from_glutin(&config, &context, &surface)?;
+    let display = Display::from_context_surface(context, surface)
+        .map_err(|err| format!("Failed to create display: {err}"))?;
 
-    OpenGLWindow {
+    Ok(OpenGLWindow {
         window,
         display,
         context: opengl_context,
-    }
+    })
 }

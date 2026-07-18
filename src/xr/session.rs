@@ -11,24 +11,24 @@ impl XRSession {
     fn new(
         instance: &XRInstance,
         opengl_context: &OpenGLContext,
-    ) -> (Self, openxr::SystemProperties) {
+    ) -> Result<(Self, openxr::SystemProperties), String> {
         let system = instance
             .instance()
             .system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)
-            .expect("Failed to get OpenXR system");
+            .map_err(|err| format!("Failed to get OpenXR system: {err}"))?;
         let system_properties = instance
             .instance()
             .system_properties(system)
-            .expect("Failed to get OpenXR system properties");
+            .map_err(|err| format!("Failed to get OpenXR system properties: {err}"))?;
         let session_create_info = opengl_context.session_create_info();
         let (session, _, _) = unsafe {
             instance
                 .instance()
                 .create_session::<openxr::OpenGL>(system, &session_create_info)
-                .expect("Failed to create OpenXR session")
+                .map_err(|err| format!("Failed to create OpenXR session: {err}"))?
         };
 
-        (Self(session), system_properties)
+        Ok((Self(session), system_properties))
     }
 
     pub fn session(&self) -> &openxr::Session<openxr::OpenGL> {
@@ -36,9 +36,9 @@ impl XRSession {
     }
 }
 
-pub fn ensure_xrsession(scene: &mut Scene) {
-    ensure_xrinstance(scene);
-    ensure_opengl_window(scene);
+pub fn ensure_xrsession(scene: &mut Scene) -> Result<(), String> {
+    ensure_xrinstance(scene)?;
+    ensure_opengl_window(scene)?;
 
     if scene
         .get_resource::<RefCell<XRSession>>("xrsession")
@@ -47,12 +47,12 @@ pub fn ensure_xrsession(scene: &mut Scene) {
         let (session, system_properties) = {
             let instance = scene
                 .get_resource::<RefCell<XRInstance>>("xrinstance")
-                .expect("Failed to get OpenXR instance");
+                .map_err(|err| format!("Failed to get OpenXR instance: {err:?}"))?;
             let opengl_window = scene
                 .get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE)
-                .expect("Failed to get OpenGL window");
+                .map_err(|err| format!("Failed to get OpenGL window: {err:?}"))?;
             let instance = instance.borrow();
-            XRSession::new(&instance, &opengl_window.context)
+            XRSession::new(&instance, &opengl_window.context)?
         };
         info!(
             scene,
@@ -69,6 +69,10 @@ pub fn ensure_xrsession(scene: &mut Scene) {
                 .max_swapchain_image_height,
             system_properties.graphics_properties.max_layer_count
         );
-        let _ = scene.add_resource("xrsession".to_owned(), RefCell::new(session));
+        scene
+            .add_resource("xrsession".to_owned(), RefCell::new(session))
+            .map_err(|err| format!("Failed to add OpenXR session resource: {err:?}"))?;
     }
+
+    Ok(())
 }

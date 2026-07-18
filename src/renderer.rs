@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, camera::rh::proj::opengl::perspective};
 use glium::{DrawParameters, Program, Surface, dynamic_uniform};
-use wasserxr::{Uuid, attacher, scene::Scene, system, warn};
+use wasserxr::{Uuid, attacher, error, scene::Scene, system, warn};
 
 use crate::{
     material_asset::MaterialData,
@@ -12,7 +12,9 @@ use crate::{
 
 #[attacher(renderer)]
 fn renderer_attach(scene: &mut Scene) {
-    ensure_opengl_window(scene);
+    if let Err(err) = ensure_opengl_window(scene) {
+        error!(scene, "Failed to initialize renderer: {}", err);
+    }
 }
 
 #[system(entities=[["Camera"], ["Model"]])]
@@ -22,7 +24,10 @@ fn renderer(scene: &mut Scene, entities: Vec<Vec<Uuid>>) {
         return;
     }
 
-    ensure_opengl_window(scene);
+    if let Err(err) = ensure_opengl_window(scene) {
+        error!(scene, "Failed to initialize renderer: {}", err);
+        return;
+    }
 
     let Ok(opengl_window) = scene.get_resource::<OpenGLWindow>(OPENGL_WINDOW_RESOURCE) else {
         return;

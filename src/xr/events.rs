@@ -1,11 +1,8 @@
 use std::cell::RefCell;
 
-use wasserxr::{Uuid, scene::Scene, system};
+use wasserxr::{Uuid, error, scene::Scene, system};
 
-use crate::xr::{
-    instance::{XRInstance, ensure_xrinstance},
-    session::ensure_xrsession,
-};
+use crate::xr::{instance::XRInstance, session::ensure_xrsession};
 
 /// Owned copy of the OpenXR events we care about.
 ///
@@ -32,30 +29,40 @@ impl XREvent {
     }
 }
 
-pub fn ensure_xr_events(scene: &mut Scene) {
+pub fn ensure_xr_events(scene: &mut Scene) -> Result<(), String> {
     if scene.get_resource::<Vec<XREvent>>("xr_events").is_err() {
-        let _ = scene.add_resource::<Vec<XREvent>>("xr_events".to_owned(), Vec::new());
+        scene
+            .add_resource::<Vec<XREvent>>("xr_events".to_owned(), Vec::new())
+            .map_err(|err| format!("Failed to add OpenXR events resource: {err:?}"))?;
     }
+
+    Ok(())
 }
 
 #[system]
 fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
-    ensure_xrinstance(scene);
-    ensure_xrsession(scene);
-    ensure_xr_events(scene);
+    if let Err(err) = ensure_xrsession(scene).and_then(|_| ensure_xr_events(scene)) {
+        error!(scene, "Failed to initialize OpenXR events: {}", err);
+        return;
+    }
 
     let mut events: Vec<XREvent> = Vec::new();
     {
-        let instance = scene
-            .get_resource::<RefCell<XRInstance>>("xrinstance")
-            .expect("Failed to get OpenXR instance");
+        let Ok(instance) = scene.get_resource::<RefCell<XRInstance>>("xrinstance") else {
+            error!(scene, "Failed to read OpenXR events: instance unavailable");
+            return;
+        };
         let instance = instance.borrow();
         let mut buffer = openxr::EventDataBuffer::default();
-        while let Some(event) = instance
-            .instance()
-            .poll_event(&mut buffer)
-            .expect("Failed to poll OpenXR events")
-        {
+        loop {
+            let event = match instance.instance().poll_event(&mut buffer) {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(err) => {
+                    error!(scene, "Failed to poll OpenXR events: {}", err);
+                    return;
+                }
+            };
             match event {
                 openxr::Event::SessionStateChanged(e) => {
                     events.push(XREvent::SessionStateChanged(e.state()));
@@ -68,23 +75,34 @@ fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
         }
     }
 
-    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") {
-        *xr_events = events;
-    }
+    let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") else {
+        error!(scene, "Failed to update OpenXR events resource");
+        return;
+    };
+    *xr_events = events;
 }
 
 #[system]
 fn xr_events_clear(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
-    ensure_xr_events(scene);
-    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") {
-        xr_events.clear();
+    if let Err(err) = ensure_xr_events(scene) {
+        error!(scene, "Failed to initialize OpenXR events: {}", err);
+        return;
     }
+    let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") else {
+        error!(scene, "Failed to clear OpenXR events resource");
+        return;
+    };
+    xr_events.clear();
 }
 
 #[system]
 fn xr_event_close(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
-    ensure_xr_events(scene);
+    if let Err(err) = ensure_xr_events(scene) {
+        error!(scene, "Failed to initialize OpenXR events: {}", err);
+        return;
+    }
     let Ok(xr_events) = scene.get_resource::<Vec<XREvent>>("xr_events") else {
+        error!(scene, "Failed to read OpenXR events resource");
         return;
     };
 
