@@ -12,18 +12,18 @@ use crate::xr::{
 /// `openxr::Event` borrows from the poll buffer, so it can't be stored in a
 /// resource. We only keep the variants that are useful right now.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum XrEvent {
+pub enum XREvent {
     SessionStateChanged(openxr::SessionState),
     InstanceLossPending,
 }
 
-impl XrEvent {
+impl XREvent {
     /// Whether this event means the runtime wants the application to stop.
     fn is_termination(self) -> bool {
         matches!(
             self,
-            XrEvent::InstanceLossPending
-                | XrEvent::SessionStateChanged(
+            XREvent::InstanceLossPending
+                | XREvent::SessionStateChanged(
                     openxr::SessionState::EXITING
                         | openxr::SessionState::LOSS_PENDING
                         | openxr::SessionState::STOPPING
@@ -33,8 +33,8 @@ impl XrEvent {
 }
 
 pub fn ensure_xr_events(scene: &mut Scene) {
-    if scene.get_resource::<Vec<XrEvent>>("xr_events").is_err() {
-        let _ = scene.add_resource::<Vec<XrEvent>>("xr_events".to_owned(), Vec::new());
+    if scene.get_resource::<Vec<XREvent>>("xr_events").is_err() {
+        let _ = scene.add_resource::<Vec<XREvent>>("xr_events".to_owned(), Vec::new());
     }
 }
 
@@ -44,7 +44,7 @@ fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     ensure_xrsession(scene);
     ensure_xr_events(scene);
 
-    let mut events: Vec<XrEvent> = Vec::new();
+    let mut events: Vec<XREvent> = Vec::new();
     {
         let instance = scene
             .get_resource::<RefCell<XRInstance>>("xrinstance")
@@ -58,17 +58,17 @@ fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
         {
             match event {
                 openxr::Event::SessionStateChanged(e) => {
-                    events.push(XrEvent::SessionStateChanged(e.state()));
+                    events.push(XREvent::SessionStateChanged(e.state()));
                 }
                 openxr::Event::InstanceLossPending(_) => {
-                    events.push(XrEvent::InstanceLossPending);
+                    events.push(XREvent::InstanceLossPending);
                 }
                 _ => {}
             }
         }
     }
 
-    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XrEvent>>("xr_events") {
+    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") {
         *xr_events = events;
     }
 }
@@ -76,7 +76,7 @@ fn xr_events_read(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 #[system]
 fn xr_events_clear(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     ensure_xr_events(scene);
-    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XrEvent>>("xr_events") {
+    if let Ok(xr_events) = scene.get_mut_resource::<Vec<XREvent>>("xr_events") {
         xr_events.clear();
     }
 }
@@ -84,7 +84,7 @@ fn xr_events_clear(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
 #[system]
 fn xr_event_close(scene: &mut Scene, _entities: Vec<Vec<Uuid>>) {
     ensure_xr_events(scene);
-    let Ok(xr_events) = scene.get_resource::<Vec<XrEvent>>("xr_events") else {
+    let Ok(xr_events) = scene.get_resource::<Vec<XREvent>>("xr_events") else {
         return;
     };
 
