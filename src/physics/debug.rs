@@ -5,7 +5,7 @@ use std::{
 
 use wasserxr::{Uuid, debug, detacher, info, scene::Scene, system};
 
-use crate::{physics::shape_assets::is_primitive, utils::object_sync::sync_objects};
+use crate::utils::object_sync::sync_objects;
 
 static DEBUG_COLLIDER: LazyLock<Mutex<HashMap<Uuid, Uuid>>> =
     LazyLock::new(|| Mutex::new(HashMap::default()));
@@ -107,19 +107,14 @@ fn update_debug_entity(
     ensure_component_exists(scene, debug_entity, "Transform");
 
     // The model and scale live on the collider/rigidbody component. The debug entity
-    // mirrors them so it renders the same mesh the physics shape was built from. Rapier
-    // primitives have no model file on the component, so they map to a bundled one.
+    // mirrors them so it renders the same mesh the physics shape was built from.
     let Ok((scale, model)) =
         scene.query::<(&[f32; 3], &String)>(entity, component, &["scale", "model"])
     else {
         return;
     };
     let scale = *scale;
-    let model = if is_primitive(model) {
-        format!("./assets/models/{model}.obj")
-    } else {
-        model.clone()
-    };
+    let model = model.clone();
 
     let Ok((entity_model, entity_material)) = scene.query_mut::<(&mut String, &mut String)>(
         debug_entity,

@@ -10,13 +10,8 @@ struct PhysicsShapeAsset {
 
 #[asset_type_creator(PhysicsShapeAsset)]
 fn create_physics_shape_asset(scene: &mut Scene, data: &str) -> Option<PhysicsShapeAsset> {
-    let shape = match primitive_shape(data) {
-        Some(primitive) => primitive,
-        None => {
-            let (vertices, indices) = model_mesh_data(scene, data)?;
-            SharedShape::trimesh(vertices, indices).ok()?
-        }
-    };
+    let (vertices, indices) = model_mesh_data(scene, data)?;
+    let shape = SharedShape::trimesh(vertices, indices).ok()?;
 
     Some(PhysicsShapeAsset { shape })
 }
@@ -31,32 +26,10 @@ fn create_convex_physics_shape_asset(
     scene: &mut Scene,
     data: &str,
 ) -> Option<ConvexPhysicsShapeAsset> {
-    let shape = match primitive_shape(data) {
-        Some(primitive) => primitive,
-        None => {
-            let (vertices, indices) = model_mesh_data(scene, data)?;
-            SharedShape::convex_decomposition(&vertices, &indices)
-        }
-    };
+    let (vertices, indices) = model_mesh_data(scene, data)?;
+    let shape = SharedShape::convex_decomposition(&vertices, &indices);
 
     Some(ConvexPhysicsShapeAsset { shape })
-}
-
-// Data strings matching a rapier primitive name resolve to a unit-sized primitive
-// instead of a model file.
-pub(crate) fn primitive_shape(data: &str) -> Option<SharedShape> {
-    match data {
-        "ball" => Some(SharedShape::ball(1.0)),
-        "cuboid" => Some(SharedShape::cuboid(1.0, 1.0, 1.0)),
-        "capsule" => Some(SharedShape::capsule_y(0.5, 0.5)),
-        "cylinder" => Some(SharedShape::cylinder(1.0, 1.0)),
-        "cone" => Some(SharedShape::cone(1.0, 1.0)),
-        _ => None,
-    }
-}
-
-pub(crate) fn is_primitive(data: &str) -> bool {
-    primitive_shape(data).is_some()
 }
 
 fn model_mesh_data(scene: &mut Scene, model: &str) -> Option<(Vec<Vector>, Vec<[u32; 3]>)> {

@@ -16,7 +16,7 @@ impl Default for Collider {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
-            model: "cuboid".to_owned(),
+            model: "./assets/models/cube.obj".to_owned(),
             convex_decomposition: false,
         }
     }
@@ -43,7 +43,7 @@ impl Default for RigidBody {
     fn default() -> Self {
         Self {
             scale: [1.0, 1.0, 1.0],
-            model: "cuboid".to_owned(),
+            model: "./assets/models/cube.obj".to_owned(),
             convex_decomposition: false,
         }
     }
